@@ -40,8 +40,10 @@ framework continua construído e executável.
 ```
 src/core/
   agent/        AgentState, Message, AgentRuntime (única importação de LangGraph)
-  contracts/    ToolContract, NodeContract, NodeContribution, AgentNode
-  plugins/      Plugin, PluginContext, PluginRegistry
+  contracts/    Capability, LLMProvider, Tool, CodeAnalyzer, Discoverer,
+                ToolContract, NodeContract, NodeContribution, AgentNode
+  plugins/      Plugin, PluginMetadata, PluginContext, PluginRegistry,
+                EntryPointDiscoverer
   events/       Event, EventBus, CoreEvents, EventHandler
   config/       CoreConfig, LangGraphOptions, PluginSlot, load_config
   runtime/      build_core, CoreContainer  (composition root)
@@ -82,6 +84,11 @@ tests/          testes unitários (há plugins stub apenas para os testes)
    `EventBus` síncrono in-process com inscrição/desinscrição. O core emite
    `agent.started`, `agent.finished`, `agent.node.started`,
    `agent.node.finished`, `plugin.activated`, `plugin.deactivated`.
+
+8. **Capabilities** — contratos puros (`Capability` + `LLMProvider`, `Tool`,
+   `CodeAnalyzer`, `Discoverer`) implementados por plugins. O `PluginRegistry`
+   registra e consulta providers e resolve o provider default sem conhecer
+   nenhuma implementação. Ver a seção *Capabilities e descoberta dinâmica*.
 
 ## Uso mínimo (zero plugins)
 
@@ -129,6 +136,78 @@ container = build_core(config=config, plugins=[MeuPlugin()])
 ```
 
 Plugins desabilitados (slot `enabled: false`) são simplesmente ignorados.
+
+## Capabilities e descoberta dinâmica
+
+O core define contratos de capability que plugins implementam — nenhum deles vem
+com implementação:
+
+| Contrato | `kind` | Papel |
+|---|---|---|
+| `LLMProvider` | `llm` | backend de LLM (`complete`) |
+| `Tool` | `tool` | ferramenta executável (`contract` + `invoke`) |
+| `CodeAnalyzer` | `analyzer` | análise de código (`analyze`) |
+| `Discoverer` | `discoverer` | descoberta de plugins (`discover`) |
+
+Um plugin declara providers por `declare_capabilities()` ou, dinamicamente, por
+`context.register_capability(...)` durante `initialize`:
+
+```python
+from core import LLMProvider, Plugin
+
+
+class MeuProvider(LLMProvider):
+    default = True  # selecionado como default do kind "llm"
+
+    @property
+    def name(self) -> str:
+        return "meu-llm"
+
+    def complete(self, messages, **options):
+        ...
+
+
+class MeuPlugin(Plugin):
+    id = "meu-plugin"
+
+    def declare_capabilities(self):
+        return [MeuProvider()]
+```
+
+O `PluginRegistry` consulta por tipo de contrato ou por `kind`:
+`capabilities(LLMProvider)`, `capability("llm", "meu-llm")`,
+`has_capability("llm")`, `capability_names(LLMProvider)` e
+`default_capability(LLMProvider)`.
+
+Provider default, sem acoplar o core a implementações, em ordem:
+`CoreConfig.defaults` (`{"llm": "meu-llm"}`, aceita o `kind` ou o nome da
+classe) → `default = True` → único provider registrado; caso contrário
+`AmbiguousCapabilityError`. Zero providers retorna `None`.
+
+### Ciclo de vida
+
+`register()` chama `load()`; `activate_all()` chama `initialize(context)` e
+registra as capabilities; `deactivate_all()` chama `shutdown()` na ordem
+reversa. Por compatibilidade, `initialize` delega para `activate` e `shutdown`
+para `deactivate`.
+
+### Descoberta
+
+`build_core()` descobre plugins instalados via entry points do grupo
+`core_agent.plugins` por padrão. Para declarar um plugin instalável:
+
+```toml
+[project.entry-points."core_agent.plugins"]
+meu-plugin = "meu_pacote:MeuPlugin"
+```
+
+O entry point pode resolver para uma instância, uma subclasse de `Plugin` ou uma
+factory sem argumentos. Passe `discoverers=[]` para desligar a descoberta, ou
+outro `Discoverer` para usar um mecanismo alternativo:
+
+```python
+core = build_core(discoverers=[MeuDiscoverer()])
+```
 
 ## Desenvolvimento
 

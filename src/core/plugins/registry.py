@@ -3,30 +3,42 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import Any
 
 from core.config.schema import CoreConfig
+from core.contracts.capability import Capability
 from core.contracts.node import NodeContribution
 from core.contracts.tool import ToolContract
-from core.errors import DuplicatePluginError, InvalidPluginError
+from core.errors import (
+    AmbiguousCapabilityError,
+    CapabilityError,
+    DuplicateCapabilityError,
+    DuplicatePluginError,
+    InvalidPluginError,
+)
 from core.events.bus import EventBus, Subscription
 from core.events.event import Event
 from core.events.types import CoreEvents
-from core.plugins.base import Plugin
+from core.plugins.base import Plugin, PluginMetadata
 from core.plugins.context import PluginContext
+
+CapabilityKey = tuple[str, str]
 
 
 class PluginRegistry:
-    """Holds plugins and drives their lifecycle.
+    """Holds plugins, drives their lifecycle and indexes their capabilities.
 
     Responsibilities:
 
     * ``register``/``extend`` — validate and store plugin instances.
-    * ``activate_all``/``deactivate_all`` — run lifecycle hooks and wire the
-      event handlers declared by each plugin.
-    * ``collect_*`` — aggregate the contributions (tools/nodes) of all plugins.
+    * ``load`` (via ``register``) / ``initialize`` / ``shutdown`` — run the
+      lifecycle hooks and wire the event handlers declared by each plugin.
+    * ``register_capability`` + ``capabilities``/``capability``/``default_capability``
+      — register and query capabilities contributed by plugins.
+    * ``collect_*`` — aggregate the declarative contributions (tools/nodes).
 
     The registry itself is agnostic of LangGraph: it only collects declarative
-    descriptions, which the runtime materializes.
+    descriptions and providers, which the runtime materializes.
     """
 
     def __init__(self, *, config: CoreConfig, events: EventBus) -> None:
@@ -36,6 +48,10 @@ class PluginRegistry:
         self._contexts: dict[str, PluginContext] = {}
         self._subscriptions: dict[str, list[Subscription]] = {}
         self._active_order: list[str] = []
+        self._capabilities: dict[CapabilityKey, Capability] = {}
+        self._capability_order: list[CapabilityKey] = []
+        self._capabilities_by_plugin: dict[str, list[CapabilityKey]] = {}
+        self._explicit_defaults: set[CapabilityKey] = set()
 
     @property
     def config(self) -> CoreConfig:
@@ -48,11 +64,19 @@ class PluginRegistry:
         return self._events
 
     def register(self, plugin: Plugin) -> None:
-        """Store ``plugin``, rejecting invalid ids and duplicates."""
+        """Store ``plugin``, rejecting invalid ids and duplicates.
+
+        Calls ``plugin.load()`` once, before the plugin is stored or receives a
+        context. Raises ``InvalidPluginError`` for objects that are not plugins
+        or have an empty id, and ``DuplicatePluginError`` for repeated ids.
+        """
+        if not isinstance(plugin, Plugin):
+            raise InvalidPluginError("plugin must be a Plugin instance")
         if not plugin.id:
             raise InvalidPluginError("plugin.id must be a non-empty string")
         if plugin.id in self._plugins:
             raise DuplicatePluginError(f"a plugin with id {plugin.id!r} is already registered")
+        plugin.load()
         self._plugins[plugin.id] = plugin
 
     def extend(self, plugins: Iterable[Plugin]) -> None:
@@ -63,6 +87,11 @@ class PluginRegistry:
     def get(self, plugin_id: str) -> Plugin | None:
         """Return the registered plugin with ``plugin_id``, if any."""
         return self._plugins.get(plugin_id)
+
+    def metadata(self, plugin_id: str) -> PluginMetadata | None:
+        """Return the metadata of ``plugin_id``, if registered."""
+        plugin = self._plugins.get(plugin_id)
+        return plugin.metadata() if plugin is not None else None
 
     def context(self, plugin_id: str) -> PluginContext | None:
         """Return the active context for ``plugin_id``, if activated."""
@@ -83,8 +112,9 @@ class PluginRegistry:
     def activate_all(self) -> None:
         """Activate every registered plugin in registration order.
 
-        For each plugin, its declared event handlers are subscribed first, then
-        ``activate`` runs, then ``plugin.activated`` is published.
+        For each plugin: declared event handlers are subscribed, ``initialize``
+        runs (with the plugin context), capabilities from
+        ``declare_capabilities`` are registered, then ``plugin.activated`` fires.
         """
         for plugin_id, plugin in self._plugins.items():
             subscriptions = [
@@ -97,8 +127,11 @@ class PluginRegistry:
                 plugin_id=plugin_id,
                 config=self._config.slot(plugin_id),
                 events=self._events,
+                registry=self,
             )
-            plugin.activate(context)
+            plugin.initialize(context)
+            for capability in plugin.declare_capabilities():
+                self._add_capability(capability, plugin_id=plugin_id)
             self._contexts[plugin_id] = context
             self._active_order.append(plugin_id)
 
@@ -111,12 +144,13 @@ class PluginRegistry:
     def deactivate_all(self) -> None:
         """Deactivate plugins in reverse activation order and remove handlers.
 
-        ``deactivate`` hooks run first; the event handlers declared by the
-        plugin are unsubscribed afterwards and ``plugin.deactivated`` fires.
+        ``shutdown`` runs first, then the plugin's capabilities and event handlers
+        are removed and ``plugin.deactivated`` fires.
         """
         for plugin_id in reversed(self._active_order):
             plugin = self._plugins[plugin_id]
-            plugin.deactivate()
+            plugin.shutdown()
+            self._remove_capabilities(plugin_id)
             for subscription in self._subscriptions.pop(plugin_id, ()):
                 self._events.unsubscribe(subscription)
             self._contexts.pop(plugin_id, None)
@@ -127,6 +161,80 @@ class PluginRegistry:
                 payload={"version": plugin.version},
             ))
         self._active_order.clear()
+
+    def register_capability(self, capability: Capability) -> Capability:
+        """Register ``capability`` and return it.
+
+        Raises:
+            CapabilityError: if it is not a capability or has an empty name.
+            DuplicateCapabilityError: if its ``(kind, name)`` is already taken.
+        """
+        self._add_capability(capability, plugin_id=None)
+        return capability
+
+    def capabilities(self, kind: type[Any] | str) -> list[Capability]:
+        """Return the registered capabilities of ``kind`` (contract type or name)."""
+        return self._filter_capabilities(kind)
+
+    def capability(self, kind: type[Any] | str, name: str) -> Capability | None:
+        """Return the capability of ``kind`` named ``name``, if registered."""
+        for capability in self._filter_capabilities(kind):
+            if capability.name == name:
+                return capability
+        return None
+
+    def has_capability(self, kind: type[Any] | str) -> bool:
+        """Whether at least one capability of ``kind`` is registered."""
+        return bool(self._filter_capabilities(kind))
+
+    def capability_names(self, kind: type[Any] | str) -> list[str]:
+        """Names of the registered capabilities of ``kind``."""
+        return [capability.name for capability in self._filter_capabilities(kind)]
+
+    def default_capability(self, kind: type[Any]) -> Capability | None:
+        """Resolve the default provider of ``kind``.
+
+        Resolution order:
+
+        1. ``CoreConfig.defaults`` (keyed by ``kind.kind`` or class name);
+        2. the provider flagged with ``default = True``;
+        3. the only provider, when exactly one is registered.
+
+        Returns ``None`` when no provider is registered. Raises
+        :class:`AmbiguousCapabilityError` when several providers exist and none
+        was selected, and :class:`CapabilityError` when the configured default
+        does not match a registered provider.
+        """
+        providers = self.capabilities(kind)
+        if not providers:
+            return None
+
+        configured = self._configured_default(kind)
+        if configured is not None:
+            for capability in providers:
+                if capability.name == configured:
+                    return capability
+            raise CapabilityError(
+                f"configured default {configured!r} for capability "
+                f"{kind.kind!r} is not registered"
+            )
+
+        flagged = [cap for cap in providers if (cap.kind, cap.name) in self._explicit_defaults]
+        if len(flagged) > 1:
+            names = ", ".join(sorted(cap.name for cap in flagged))
+            raise AmbiguousCapabilityError(
+                f"multiple default providers for capability {kind.kind!r}: {names}"
+            )
+        if len(flagged) == 1:
+            return flagged[0]
+        if len(providers) == 1:
+            return providers[0]
+
+        names = ", ".join(sorted(cap.name for cap in providers))
+        raise AmbiguousCapabilityError(
+            f"no default provider configured for capability {kind.kind!r} "
+            f"(available: {names})"
+        )
 
     def collect_nodes(self) -> list[NodeContribution]:
         """Aggregate the node contributions of every registered plugin."""
@@ -143,3 +251,43 @@ class PluginRegistry:
             for plugin in self._plugins.values()
             for contract in plugin.declare_tools()
         ]
+
+    def _filter_capabilities(self, kind: type[Any] | str) -> list[Capability]:
+        result: list[Capability] = []
+        for key in list(self._capability_order):
+            capability = self._capabilities[key]
+            if isinstance(kind, str):
+                if capability.kind == kind:
+                    result.append(capability)
+            elif isinstance(capability, kind):
+                result.append(capability)
+        return result
+
+    def _add_capability(self, capability: Capability, *, plugin_id: str | None) -> None:
+        if not isinstance(capability, Capability):
+            raise CapabilityError("capability must be a Capability instance")
+        if not capability.name:
+            raise CapabilityError("capability.name must be a non-empty string")
+        key: CapabilityKey = (capability.kind, capability.name)
+        if key in self._capabilities:
+            raise DuplicateCapabilityError(
+                f"capability {capability.name!r} of kind {capability.kind!r} "
+                "is already registered"
+            )
+        self._capabilities[key] = capability
+        self._capability_order.append(key)
+        if capability.default:
+            self._explicit_defaults.add(key)
+        if plugin_id is not None:
+            self._capabilities_by_plugin.setdefault(plugin_id, []).append(key)
+
+    def _remove_capabilities(self, plugin_id: str) -> None:
+        for key in self._capabilities_by_plugin.pop(plugin_id, ()):
+            self._capabilities.pop(key, None)
+            self._explicit_defaults.discard(key)
+            if key in self._capability_order:
+                self._capability_order.remove(key)
+
+    def _configured_default(self, kind: type[Any]) -> str | None:
+        defaults = self._config.defaults
+        return defaults.get(kind.kind) or defaults.get(kind.__name__)

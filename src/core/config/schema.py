@@ -43,6 +43,10 @@ class CoreConfig(BaseModel):
         environment: deployment environment.
         plugins: per-plugin slots keyed by plugin id.
         langgraph: options forwarded to the execution engine.
+        defaults: default provider per capability, keyed by ``kind`` (for
+            example ``{"llm": "openai"}``) or by contract class name. Used by
+            ``PluginRegistry.default_capability`` without coupling the core to
+            any concrete provider.
     """
 
     app_name: str = "core-agent"
@@ -50,6 +54,7 @@ class CoreConfig(BaseModel):
     environment: Environment = "development"
     plugins: dict[str, PluginSlot] = Field(default_factory=dict)
     langgraph: LangGraphOptions = Field(default_factory=LangGraphOptions)
+    defaults: dict[str, str] = Field(default_factory=dict)
 
     def slot(self, plugin_id: str) -> PluginSlot:
         """Return the slot for ``plugin_id``, defaulting to an enabled empty one."""

@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from core.config.schema import PluginSlot
 from core.events.bus import EventBus, Subscription
 from core.events.event import Event
 from core.events.types import EventHandler
 
+if TYPE_CHECKING:
+    from core.contracts.capability import Capability
+    from core.plugins.registry import PluginRegistry
+
 
 class PluginContext:
-    """Services a plugin can use: configuration and event interaction.
+    """Services a plugin can use: configuration, events and capabilities.
 
     The context is deliberately narrow — plugins get exactly what they need and
     no more, which keeps the core's extension surface small and stable.
@@ -23,10 +27,12 @@ class PluginContext:
         plugin_id: str,
         config: PluginSlot,
         events: EventBus,
+        registry: PluginRegistry,
     ) -> None:
         self._plugin_id = plugin_id
         self._config = config
         self._events = events
+        self._registry = registry
 
     @property
     def plugin_id(self) -> str:
@@ -45,6 +51,14 @@ class PluginContext:
     def get_setting(self, name: str, default: Any = None) -> Any:
         """Return a setting value, falling back to ``default``."""
         return self._config.settings.get(name, default)
+
+    def register_capability(self, capability: Capability) -> Capability:
+        """Register a capability dynamically (alternative to ``declare_capabilities``).
+
+        Prefer the declarative :meth:`Plugin.declare_capabilities` hook; this is
+        for providers that can only be built once settings are known.
+        """
+        return self._registry.register_capability(capability)
 
     def publish(self, event: Event[Any]) -> None:
         """Publish an event to the core event bus."""

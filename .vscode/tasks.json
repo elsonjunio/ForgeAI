@@ -1,0 +1,40 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "setup: criar venv + instalar",
+      "type": "shell",
+      "command": "python3 -m venv .venv && .venv/bin/python -m pip install -e '.[dev]'",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "test",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/bin/pytest",
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "lint",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/bin/ruff check src tests",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "typecheck",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/bin/mypy src tests",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "check: test + lint + typecheck",
+      "dependsOn": ["test", "lint", "typecheck"],
+      "dependsOrder": "parallel",
+      "problemMatcher": []
+    }
+  ]
+}
