@@ -13,7 +13,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from core.agent.state import now_utc
-from core.plugins.base import PluginMetadata
+from core.contracts.plugin import PluginMetadata
 
 WorkflowStatus = Literal["idle", "running", "completed", "failed"]
 TaskStatus = Literal["pending", "running", "completed", "failed"]

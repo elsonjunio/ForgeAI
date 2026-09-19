@@ -31,7 +31,6 @@ class LangGraphOptions(BaseModel):
     """
 
     recursion_limit: int = Field(default=25, ge=1, le=1_000_000)
-    debug: bool = False
 
 
 class WorkflowOptions(BaseModel):

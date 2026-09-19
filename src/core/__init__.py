@@ -43,6 +43,8 @@ from core.contracts.capability import Capability
 from core.contracts.discovery import Discoverer
 from core.contracts.llm import LLMProvider
 from core.contracts.node import AgentNode, NodeContract, NodeContribution
+from core.contracts.plugin import PluginMetadata
+from core.contracts.registry import CapabilitySource
 from core.contracts.tool import Tool, ToolContract, ToolResult
 from core.contracts.validator import ValidationInput, ValidationResult, Validator
 from core.errors import (
@@ -61,7 +63,7 @@ from core.errors import (
 from core.events.bus import EventBus, Subscription
 from core.events.event import Event
 from core.events.types import CoreEvents, EventHandler, WorkflowEvents
-from core.plugins.base import Plugin, PluginMetadata
+from core.plugins.base import Plugin
 from core.plugins.context import PluginContext
 from core.plugins.discovery import (
     DEFAULT_ENTRY_POINT_GROUP,
@@ -83,6 +85,7 @@ __all__ = [
     "AnalysisResult",
     "Capability",
     "CapabilityError",
+    "CapabilitySource",
     "CodeAnalyzer",
     "ConfigError",
     "CoreConfig",

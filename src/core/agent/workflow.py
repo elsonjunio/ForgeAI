@@ -16,7 +16,8 @@ failed.
 
 from __future__ import annotations
 
-from typing import Any
+import re
+from typing import Any, cast
 
 from core.agent.state import Message
 from core.agent.workflow_state import (
@@ -31,13 +32,13 @@ from core.agent.workflow_state import (
 from core.config.schema import WorkflowOptions
 from core.contracts.discovery import Discoverer
 from core.contracts.llm import LLMProvider
+from core.contracts.registry import CapabilitySource
 from core.contracts.tool import Tool
 from core.contracts.validator import ValidationInput, Validator
 from core.errors import CoreError, MissingCapabilityError
 from core.events.bus import EventBus
 from core.events.event import Event
 from core.events.types import WorkflowEvents
-from core.plugins.registry import PluginRegistry
 
 # Stage identifiers, also used as event sources.
 STAGE_INITIALIZE = "initialize"
@@ -51,16 +52,19 @@ STAGE_REVIEW = "review"
 ROUTE_EXECUTION = "execution"
 ROUTE_END = "end"
 
+# Strips a leading bullet or ordinal ("- ", "* ", "1. ", "2) ") from a plan line.
+_TASK_PREFIX = re.compile(r"^\s*(?:[-*\u2022]|\d+[.)])\s*")
+
 
 class WorkflowContext:
     """Services available to workflow stages.
 
     Stages use this instead of importing concrete plugins: LLM providers, tools,
-    validators and discoverers are all resolved from the
-    :class:`~core.plugins.registry.PluginRegistry` at call time.
+    validators and discoverers are all resolved from a
+    :class:`~core.contracts.registry.CapabilitySource` at call time.
 
     Args:
-        registry: the plugin registry holding the capabilities.
+        registry: the capability source holding the providers.
         events: the bus the workflow publishes its events on.
         options: workflow knobs; defaults are used when omitted.
     """
@@ -68,7 +72,7 @@ class WorkflowContext:
     def __init__(
         self,
         *,
-        registry: PluginRegistry,
+        registry: CapabilitySource,
         events: EventBus,
         options: WorkflowOptions | None = None,
     ) -> None:
@@ -77,7 +81,8 @@ class WorkflowContext:
         self._options = options or WorkflowOptions()
 
     @property
-    def registry(self) -> PluginRegistry:
+    def registry(self) -> CapabilitySource:
+        """The capability source stages resolve providers from."""
         return self._registry
 
     @property
@@ -87,6 +92,13 @@ class WorkflowContext:
     @property
     def options(self) -> WorkflowOptions:
         return self._options
+
+    def capability_inventory(self) -> dict[str, list[str]]:
+        """Map each registered capability ``kind`` to its provider names."""
+        return {
+            kind: self._registry.capability_names(kind)
+            for kind in self._registry.capability_kinds()
+        }
 
     def llm(self) -> LLMProvider:
         """Return the default LLM provider.
@@ -109,23 +121,15 @@ class WorkflowContext:
 
     def tools(self) -> list[Tool]:
         """Available executable tools, in registration order."""
-        return [cap for cap in self._registry.capabilities(Tool) if isinstance(cap, Tool)]
+        return cast("list[Tool]", self._registry.capabilities(Tool))
 
     def validators(self) -> list[Validator]:
         """Available validators, in registration order."""
-        return [
-            cap
-            for cap in self._registry.capabilities(Validator)
-            if isinstance(cap, Validator)
-        ]
+        return cast("list[Validator]", self._registry.capabilities(Validator))
 
     def discoverers(self) -> list[Discoverer]:
         """Available discoverers, in registration order."""
-        return [
-            cap
-            for cap in self._registry.capabilities(Discoverer)
-            if isinstance(cap, Discoverer)
-        ]
+        return cast("list[Discoverer]", self._registry.capabilities(Discoverer))
 
     def emit(
         self,
@@ -157,7 +161,7 @@ def _tasks_from_text(text: str) -> list[Task]:
     """Derive tasks from the planner reply, one per non-empty line."""
     tasks: list[Task] = []
     for line in text.splitlines():
-        description = line.strip().lstrip("-*0123456789.) ").strip()
+        description = _TASK_PREFIX.sub("", line).strip()
         if description:
             tasks.append(Task(id=f"task-{len(tasks) + 1}", description=description))
     if not tasks:
@@ -191,10 +195,7 @@ def initialize(state: WorkflowState, context: WorkflowContext) -> WorkflowState:
 
 def discovery(state: WorkflowState, context: WorkflowContext) -> WorkflowState:
     """Collect the capability inventory and run the registered discoverers."""
-    inventory = {
-        kind: context.registry.capability_names(kind)
-        for kind in context.registry.capability_kinds()
-    }
+    inventory = context.capability_inventory()
     plugins = []
     errors = list(state.errors)
     for discoverer in context.discoverers():

@@ -93,3 +93,17 @@ class FailOnceValidator(Validator):
             passed=passed,
             messages=("first attempt",) if not passed else ("recovered",),
         )
+
+
+class RaisingValidator(Validator):
+    """Raises a non-core error, to test observability of unexpected failures."""
+
+    def __init__(self, name: str = "boom") -> None:
+        self._name = name
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    def validate(self, data: ValidationInput) -> ValidationResult:
+        raise RuntimeError("validator exploded")

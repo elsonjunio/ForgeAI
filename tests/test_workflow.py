@@ -18,6 +18,7 @@ from tests.support.workflow import (
     AlwaysFailValidator,
     AlwaysPassValidator,
     FailOnceValidator,
+    RaisingValidator,
     ScriptedLLMProvider,
 )
 
@@ -185,6 +186,18 @@ def test_retry_after_validation_failure_then_success() -> None:
     assert state.attempts == 2
     assert state.validations[0].passed is True
     assert retries == [WorkflowEvents.WORKFLOW_RETRY]
+
+
+def test_unexpected_error_emits_failed_event() -> None:
+    llm = ScriptedLLMProvider(["task", "out", "APPROVED"])
+    core = make_container([llm, RaisingValidator()])
+    failures = collect_events(core, WorkflowEvents.WORKFLOW_FAILED)
+
+    with pytest.raises(RuntimeError):
+        core.workflow.run(request="x")
+
+    assert failures == [WorkflowEvents.WORKFLOW_FAILED]
+    core.shutdown()
 
 
 def test_retry_after_review_rejection() -> None:

@@ -8,6 +8,7 @@ import pytest
 from core.agent.runtime import AgentRuntime
 from core.agent.state import AgentState
 from core.config.schema import CoreConfig
+from core.contracts.node import NodeContract, NodeContribution
 from core.errors import InvalidGraphError
 from core.events.bus import EventBus
 from core.events.types import CoreEvents
@@ -175,3 +176,14 @@ def test_custom_recursion_limit_reaches_graph() -> None:
     core = build_core(config=config)
     final = core.runtime.run(task="shallow")
     assert final.status == "completed"
+
+
+def test_failed_status_set_by_node_is_preserved() -> None:
+    def fail(state: AgentState) -> AgentState:
+        return state.model_copy(update={"status": "failed"})
+
+    runtime = AgentRuntime(
+        nodes=[NodeContribution(contract=NodeContract(id="fail"), node=fail)]
+    )
+    final = runtime.run(task="x")
+    assert final.status == "failed"

@@ -17,6 +17,13 @@ framework continua construído e executável.
 
 ## Camadas
 
+Princípio central:
+
+```
+CORE   = contratos + runtime + orquestração
+PLUGIN = capacidades (LLM, tools, validators, analyzers, discoverers)
+```
+
 ```
                      +------------------------------+
                      |   core (API pública estável) |
@@ -26,13 +33,19 @@ framework continua construído e executável.
         |                         |           |
    Domain                  Runtime          Infra
    (contratos,            (execução,        (config loading,
-    modelos puros)         extensão)         composition root)
+    modelos puros)         orquestração)     composition root)
 ```
+
+**Regra de dependência:** `core.agent.*` e `core.runtime.*` dependem de
+`core.contracts` — e **nunca** de plugins concretos. A orquestração resolve
+capacidades via `CapabilitySource` (interface); `PluginRegistry` é uma
+implementação dela. Qualquer pacote externo que forneça `LLMProvider`, `Tool`,
+`Validator` ou `Discoverer` é aceito sem alterar o core.
 
 | Camada | Pacotes | Responsabilidade |
 |---|---|---|
-| **Domínio** | `core.contracts`, `core.agent.state`, `core.events.event`, `core.config.schema` | Modelos puros e contratos (Pydantic), sem I/O e sem LangGraph. |
-| **Runtime** | `core.agent.runtime`, `core.plugins`, `core.events.bus` | Orquestração. `AgentRuntime` encapsula LangGraph; `PluginRegistry` administra o ciclo de vida dos plugins. |
+| **Domínio** | `core.contracts`, `core.agent.state`, `core.agent.workflow_state`, `core.events.event`, `core.config.schema` | Modelos puros e contratos (Pydantic), sem I/O e sem LangGraph. |
+| **Runtime** | `core.agent.runtime`, `core.agent.workflow`, `core.plugins`, `core.events.bus` | Orquestração. `AgentRuntime`/`WorkflowRuntime` encapsulam LangGraph; `PluginRegistry` administra o ciclo de vida e as capabilities dos plugins. |
 | **Infraestrutura** | `core.config.loader`, `core.runtime` | Carregamento de configuração (dict/JSON) e composition root (`build_core`). |
 
 ### Estrutura
@@ -41,14 +54,14 @@ framework continua construído e executável.
 src/core/
   agent/        AgentState, Message, AgentRuntime; WorkflowState, workflow
                 stages, WorkflowRuntime (única importação de LangGraph)
-  contracts/    Capability, LLMProvider, Tool, CodeAnalyzer, Validator,
-                Discoverer, ToolContract, NodeContract, NodeContribution
-  plugins/      Plugin, PluginMetadata, PluginContext, PluginRegistry,
-                EntryPointDiscoverer
+  contracts/    Capability, CapabilitySource, LLMProvider, Tool, CodeAnalyzer,
+                Validator, Discoverer, PluginMetadata, ToolContract,
+                NodeContract, NodeContribution
+  plugins/      Plugin, PluginContext, PluginRegistry, EntryPointDiscoverer
   events/       Event, EventBus, CoreEvents, WorkflowEvents, EventHandler
   config/       CoreConfig, LangGraphOptions, WorkflowOptions, PluginSlot
   runtime/      build_core, CoreContainer  (composition root)
-tests/          testes unitários (há plugins stubs apenas para os testes)
+tests/          testes unitários + tests/integration (plugin externo de teste)
 ```
 
 ## Componentes centrais
@@ -63,10 +76,12 @@ tests/          testes unitários (há plugins stubs apenas para os testes)
    estrutura `init → n1 → … → nn → END`. Expõe `run()` e `arun()`. Com zero
    contribuições o grafo se reduz à inicialização do estado.
 
-3. **`Plugin`** — ABC de extensão. Hooks de ciclo de vida
-   (`activate`/`deactivate`) e de contribuição (`declare_tools`,
-   `declare_nodes`, `event_handlers`). O contrato default é vazio — um plugin
-   sem nenhuma contribuição funciona.
+3. **`Plugin`** — base de extensão. Ciclo de vida
+   (`load` → `initialize` → `shutdown`; `initialize`/`shutdown` delegam para
+   `activate`/`deactivate` por compatibilidade) e contribuições
+   (`declare_capabilities`, `declare_tools`, `declare_nodes`,
+   `event_handlers`). Identidade/versão/metadata via `PluginMetadata`. O
+   contrato default é vazio — um plugin sem nenhuma contribuição funciona.
 
 4. **`PluginContext`** — os serviços que um plugin recebe: sua fatia de
    configuração (`config`, `settings`, `get_setting`) e interação com eventos
@@ -271,6 +286,72 @@ from core import CoreConfig, build_core
 config = CoreConfig.model_validate({"workflow": {"max_attempts": 3}})
 core = build_core(config=config)
 ```
+
+## Como criar um plugin externo
+
+Um plugin é um pacote Python normal que importa **apenas a API pública** de
+`core`. Ele não modifica o core e é descoberto por entry point (grupo
+`core_agent.plugins`). Exemplo de um provider de LLM:
+
+```python
+# meu_pacote/plugin.py
+from collections.abc import Sequence
+from typing import Any
+
+from core import LLMProvider, Message, Plugin
+
+
+class MeuLLM(LLMProvider):
+    default = True                      # vira o provider default do kind "llm"
+
+    @property
+    def name(self) -> str:              # único dentro do kind
+        return "meu-llm"
+
+    def complete(self, messages: Sequence[Message], **options: Any) -> Message:
+        ...                             # chame seu backend aqui
+
+
+class MeuPlugin(Plugin):
+    id = "code-agent-plugin-meu"
+    version = "1.0.0"
+
+    def declare_capabilities(self):
+        return [MeuLLM()]
+```
+
+Registre o entry point no `pyproject.toml` do seu pacote:
+
+```toml
+[project.entry-points."core_agent.plugins"]
+code-agent-plugin-meu = "meu_pacote.plugin:MeuPlugin"
+```
+
+Instalado (`pip install -e .`), o plugin é descoberto automaticamente:
+
+```python
+from core import build_core
+
+core = build_core()                    # descobre por entry points
+core.workflow.run(request="...")
+core.shutdown()
+```
+
+Regras a respeitar:
+
+- **Importe só a API pública** (`from core import ...`); nunca importe
+  `langgraph`/`langchain_core` nem módulos internos.
+- **Não conheça outros plugins**: receba os serviços pelo registry/contexto.
+- **Forneça capacidades, não fluxo**: `LLMProvider`, `Tool`, `Validator`,
+  `Discoverer`, `CodeAnalyzer` (ou um subtipo próprio de `Capability`).
+- **Identidade única**: `Plugin.id` e cada `(kind, name)` de capability.
+- Desative com `CoreConfig.plugins[<id>].enabled = false`.
+- Default de provider: flag `default = True`, ou `CoreConfig.defaults`
+  (`{"llm": "meu-llm"}`), ou provider único.
+
+Um exemplo executável está em `tests/integration/fake_plugin/` (usa somente a
+API pública) e é exercitado por `tests/integration/test_external_plugin.py`,
+inclusive via descoberta por entry point.
 
 ## Desenvolvimento
 

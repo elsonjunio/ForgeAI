@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, ConfigDict, Field
-
 from core.contracts.node import NodeContribution
+from core.contracts.plugin import PluginMetadata
 from core.contracts.tool import ToolContract
 
 if TYPE_CHECKING:
@@ -14,29 +13,7 @@ if TYPE_CHECKING:
     from core.events.types import EventHandler
     from core.plugins.context import PluginContext
 
-
-class PluginMetadata(BaseModel):
-    """Identity, version and descriptive information about a plugin.
-
-    Args:
-        id: stable identity, unique across loaded plugins.
-        version: plugin version string.
-        name: human-readable name (defaults to the class name).
-        description: what the plugin does.
-        author: plugin author or maintainer.
-        homepage: project/documentation URL.
-        tags: free-form labels for filtering.
-    """
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    id: str = Field(min_length=1)
-    version: str = "0.0.0"
-    name: str = ""
-    description: str = ""
-    author: str = ""
-    homepage: str | None = None
-    tags: tuple[str, ...] = ()
+__all__ = ["Plugin", "PluginMetadata"]
 
 
 class Plugin:

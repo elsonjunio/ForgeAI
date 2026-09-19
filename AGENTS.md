@@ -26,12 +26,19 @@ Target is Python **3.10+** (`requires-python`, ruff `target-version`, mypy
 
 - `src/core/` — the shipped package. Import as `core.*`, never `src.core.*`
   (pytest `pythonpath = ["src"]`, mypy `mypy_path = ["src"]`).
-- `tests/` — pytest suite. `tests/support/plugins.py` holds stub plugins used
-  only by tests and is excluded from mypy.
+- `tests/` — pytest suite. `tests/support/` holds stubs used only by tests and is
+  excluded from mypy. `tests/integration/fake_plugin/` is an external-style
+  plugin that imports only the public `core` API and is exercised through
+  entry-point discovery (`tests/integration/test_external_plugin.py`).
 - `pyproject.toml` — single source of truth for deps, ruff, mypy, pytest config.
 
 ## Architecture constraints (easy to violate)
 
+- **Layering.** `core.agent.*` depends on `core.contracts` (for example
+  `CapabilitySource`, `PluginMetadata`) and must **not** import concrete
+  `core.plugins.*` types. `PluginRegistry` is just one `CapabilitySource`
+  implementation; this is what lets external plugin packages be added without
+  touching the core.
 - **LangGraph is quarantined.** Only `src/core/agent/runtime.py` may import
   `langgraph` / `langchain_core`. Plugins and every other module work with plain
   `AgentState` and must never touch `StateGraph`.
@@ -74,9 +81,9 @@ Target is Python **3.10+** (`requires-python`, ruff `target-version`, mypy
 - **Workflow retry/status.** `CoreConfig.workflow.max_attempts` caps execution
   passes. `review` ends `completed` only if approved **and** all validations
   passed; otherwise it retries `execution` while `attempts < max_attempts`, else
-  ends `failed`. `run`/`arun` emit `workflow.failed` and re-raise `CoreError`
-  (e.g. `MissingCapabilityError`). Events live in `WorkflowEvents`
-  (`core/events/types.py`).
+  ends `failed`. `run`/`arun` emit `workflow.failed` and re-raise the original
+  exception (any `Exception`, e.g. `MissingCapabilityError`). Events live in
+  `WorkflowEvents` (`core/events/types.py`).
 - **Graph wiring lives in `AgentRuntime`**: `START -> __core_init__ -> n1 -> ...
   -> nn -> END`. `__core_init__` is reserved; contributing a node with that id
   raises `InvalidGraphError`.
@@ -93,8 +100,8 @@ Target is Python **3.10+** (`requires-python`, ruff `target-version`, mypy
 
 - `AgentState` and `Message` use `extra="forbid"`; put free-form data in
   `metadata`, never by adding fields.
-- `AgentRuntime._finalize` unconditionally sets `status="completed"` on the
-  returned state, regardless of what a node set.
+- `AgentRuntime._finalize` preserves a `failed` status set by a node; otherwise
+  it marks the run `completed`.
 - `load_config` accepts only `None`, a mapping, or a path to a JSON file — no
   TOML/YAML.
 - Plugins absent from `CoreConfig.plugins` are **enabled by default**

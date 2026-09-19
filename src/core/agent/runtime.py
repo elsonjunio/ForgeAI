@@ -1,9 +1,16 @@
-"""The agent runtime: the only component aware of LangGraph.
+"""LangGraph-backed runtimes for the core agent.
 
-``AgentRuntime`` owns construction and compilation of the execution graph. The
-rest of the framework — plugins, contracts, events — works with plain
-:class:`AgentState` objects and never touches ``StateGraph`` directly. To
-replace the execution engine later, only this module needs to change.
+This module is the **only** place that imports LangGraph/LangChain. It hosts two
+compiled graphs:
+
+* :class:`AgentRuntime` — the generic graph built from plugin-contributed nodes
+  (``NodeContribution``), operating on :class:`AgentState`.
+* :class:`WorkflowRuntime` — the fixed code-agent pipeline
+  (``initialize -> discovery -> planning -> execution -> validation -> review``)
+  operating on :class:`WorkflowState`.
+
+Stage logic lives in :mod:`core.agent.workflow` and never touches ``StateGraph``;
+to replace the execution engine later, only this module needs to change.
 """
 
 from __future__ import annotations
@@ -31,7 +38,7 @@ from core.agent.workflow import (
 from core.agent.workflow_state import WorkflowState
 from core.config.schema import LangGraphOptions
 from core.contracts.node import NodeContribution
-from core.errors import CoreError, InvalidGraphError
+from core.errors import InvalidGraphError
 from core.events.bus import EventBus
 from core.events.event import Event
 from core.events.types import CoreEvents, WorkflowEvents
@@ -106,8 +113,9 @@ class AgentRuntime:
         return self._finalize(result["agent_state"])
 
     def _finalize(self, state: AgentState) -> AgentState:
-        """Mark the run as completed and publish the finish event."""
-        final = state.model_copy(update={"status": "completed", "updated_at": now_utc()})
+        """Finalize the run: keep a ``failed`` status, otherwise mark completed."""
+        status = "failed" if state.status == "failed" else "completed"
+        final = state.model_copy(update={"status": status, "updated_at": now_utc()})
         self._events.publish(Event[object](
             type=CoreEvents.AGENT_FINISHED,
             source="core",
@@ -259,17 +267,16 @@ class WorkflowRuntime:
             state: initial state; when omitted, a fresh state is created.
 
         Raises:
-            CoreError: capability or graph errors are re-raised after a
-                ``workflow.failed`` event is emitted, so callers can identify
-                them (for example :class:`MissingCapabilityError`).
+            Exception: any stage failure is re-raised after a ``workflow.failed``
+                event is emitted, so callers can identify it (for example
+                :class:`MissingCapabilityError`).
         """
         initial = state or WorkflowState(request=request)
-        config: RunnableConfig = {
-            "recursion_limit": self._context.options.recursion_limit
-        }
         try:
-            result = self._compiled.invoke({"workflow_state": initial}, config=config)
-        except CoreError as exc:
+            result = self._compiled.invoke(
+                {"workflow_state": initial}, config=self._run_config()
+            )
+        except Exception as exc:
             self._emit_failure(type(exc).__name__, str(exc))
             raise
         return self._finalize(result["workflow_state"])
@@ -282,17 +289,17 @@ class WorkflowRuntime:
     ) -> WorkflowState:
         """Async variant of :meth:`run`."""
         initial = state or WorkflowState(request=request)
-        config: RunnableConfig = {
-            "recursion_limit": self._context.options.recursion_limit
-        }
         try:
             result = await self._compiled.ainvoke(
-                {"workflow_state": initial}, config=config
+                {"workflow_state": initial}, config=self._run_config()
             )
-        except CoreError as exc:
+        except Exception as exc:
             self._emit_failure(type(exc).__name__, str(exc))
             raise
         return self._finalize(result["workflow_state"])
+
+    def _run_config(self) -> RunnableConfig:
+        return {"recursion_limit": self._context.options.recursion_limit}
 
     def _finalize(self, state: WorkflowState) -> WorkflowState:
         if state.status == "completed":
