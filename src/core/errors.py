@@ -39,5 +39,9 @@ class AmbiguousCapabilityError(CapabilityError):
     """Raised when a default provider cannot be resolved unambiguously."""
 
 
+class MissingCapabilityError(CapabilityError):
+    """Raised when a required capability provider is not registered."""
+
+
 class DiscoveryError(PluginError):
     """Raised when a plugin cannot be discovered or materialized."""

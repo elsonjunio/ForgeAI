@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from core.agent.runtime import AgentRuntime
+from core.agent.runtime import AgentRuntime, WorkflowRuntime
+from core.agent.workflow import WorkflowContext
 from core.config.schema import CoreConfig
 from core.contracts.discovery import Discoverer
 from core.events.bus import EventBus
@@ -30,12 +31,14 @@ def build_core(
             discovery entirely.
 
     Returns:
-        A ready-to-use :class:`CoreContainer` — ``container.runtime`` is the
-        public entry point.
+        A ready-to-use :class:`CoreContainer`. ``container.runtime`` runs the
+        generic plugin-contributed graph; ``container.workflow`` runs the
+        code-agent workflow.
 
     Discovered and explicit plugins are registered in that order, after
     filtering by ``config.is_enabled``. With zero plugins the framework still
-    builds and runs: the agent graph reduces to state initialization.
+    builds and runs: the agent graph reduces to state initialization and the
+    workflow is built (it only requires an LLM when it actually runs).
     """
     cfg = config or CoreConfig()
     events = EventBus()
@@ -56,4 +59,14 @@ def build_core(
         options=cfg.langgraph,
     )
 
-    return CoreContainer(config=cfg, events=events, registry=registry, runtime=runtime)
+    workflow = WorkflowRuntime(
+        context=WorkflowContext(registry=registry, events=events, options=cfg.workflow)
+    )
+
+    return CoreContainer(
+        config=cfg,
+        events=events,
+        registry=registry,
+        runtime=runtime,
+        workflow=workflow,
+    )

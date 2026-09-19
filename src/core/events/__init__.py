@@ -2,6 +2,13 @@
 
 from core.events.bus import EventBus, Subscription
 from core.events.event import Event
-from core.events.types import CoreEvents, EventHandler
+from core.events.types import CoreEvents, EventHandler, WorkflowEvents
 
-__all__ = ["CoreEvents", "Event", "EventBus", "EventHandler", "Subscription"]
+__all__ = [
+    "CoreEvents",
+    "Event",
+    "EventBus",
+    "EventHandler",
+    "Subscription",
+    "WorkflowEvents",
+]

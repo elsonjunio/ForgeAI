@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from core.agent.runtime import AgentRuntime
+    from core.agent.runtime import AgentRuntime, WorkflowRuntime
     from core.config.schema import CoreConfig
     from core.events.bus import EventBus
     from core.plugins.registry import PluginRegistry
@@ -20,13 +20,15 @@ class CoreContainer:
         config: the resolved configuration.
         events: the shared event bus.
         registry: the plugin registry.
-        runtime: the compiled agent runtime.
+        runtime: the compiled generic agent runtime (plugin-contributed nodes).
+        workflow: the compiled code-agent workflow runtime.
     """
 
     config: CoreConfig
     events: EventBus
     registry: PluginRegistry
     runtime: AgentRuntime
+    workflow: WorkflowRuntime
 
     @property
     def node_ids(self) -> tuple[str, ...]:

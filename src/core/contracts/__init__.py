@@ -6,6 +6,7 @@ from core.contracts.discovery import Discoverer
 from core.contracts.llm import LLMProvider
 from core.contracts.node import AgentNode, NodeContract, NodeContribution
 from core.contracts.tool import Tool, ToolContract, ToolResult
+from core.contracts.validator import ValidationInput, ValidationResult, Validator
 
 __all__ = [
     "AgentNode",
@@ -19,4 +20,7 @@ __all__ = [
     "Tool",
     "ToolContract",
     "ToolResult",
+    "ValidationInput",
+    "ValidationResult",
+    "Validator",
 ]

@@ -191,6 +191,10 @@ class PluginRegistry:
         """Names of the registered capabilities of ``kind``."""
         return [capability.name for capability in self._filter_capabilities(kind)]
 
+    def capability_kinds(self) -> list[str]:
+        """Sorted ``kind`` values of all registered capabilities."""
+        return sorted({capability.kind for capability in self._capabilities.values()})
+
     def default_capability(self, kind: type[Any]) -> Capability | None:
         """Resolve the default provider of ``kind``.
 

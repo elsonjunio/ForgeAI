@@ -60,6 +60,23 @@ Target is Python **3.10+** (`requires-python`, ruff `target-version`, mypy
   `plugins=` and discovered plugins are registered together (duplicate ids
   raise `DuplicatePluginError`). Other mechanisms implement the `Discoverer`
   contract.
+- **Code-agent workflow.** `WorkflowRuntime` (in `core/agent/runtime.py`, the
+  only module allowed to import LangGraph) builds the fixed pipeline
+  `initialize → discovery → planning → execution → validation → review`. Stage
+  logic lives in `core/agent/workflow.py` and must **not** import `langgraph`
+  or concrete plugins. `build_core` always exposes `container.workflow`.
+- **Workflow capabilities.** `planning`/`execution`/`review` need the default
+  `LLMProvider`; when absent, `WorkflowContext.llm()` raises
+  `MissingCapabilityError`. `discovery` runs registered `Discoverer`s
+  (none is fine), `execution` reads `Tool`s, `validation` runs registered
+  `Validator`s (none means nothing to validate). No tools/discoverers/
+  validators → the workflow still runs; build never requires an LLM.
+- **Workflow retry/status.** `CoreConfig.workflow.max_attempts` caps execution
+  passes. `review` ends `completed` only if approved **and** all validations
+  passed; otherwise it retries `execution` while `attempts < max_attempts`, else
+  ends `failed`. `run`/`arun` emit `workflow.failed` and re-raise `CoreError`
+  (e.g. `MissingCapabilityError`). Events live in `WorkflowEvents`
+  (`core/events/types.py`).
 - **Graph wiring lives in `AgentRuntime`**: `START -> __core_init__ -> n1 -> ...
   -> nn -> END`. `__core_init__` is reserved; contributing a node with that id
   raises `InvalidGraphError`.

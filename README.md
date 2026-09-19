@@ -39,15 +39,16 @@ framework continua construído e executável.
 
 ```
 src/core/
-  agent/        AgentState, Message, AgentRuntime (única importação de LangGraph)
-  contracts/    Capability, LLMProvider, Tool, CodeAnalyzer, Discoverer,
-                ToolContract, NodeContract, NodeContribution, AgentNode
+  agent/        AgentState, Message, AgentRuntime; WorkflowState, workflow
+                stages, WorkflowRuntime (única importação de LangGraph)
+  contracts/    Capability, LLMProvider, Tool, CodeAnalyzer, Validator,
+                Discoverer, ToolContract, NodeContract, NodeContribution
   plugins/      Plugin, PluginMetadata, PluginContext, PluginRegistry,
                 EntryPointDiscoverer
-  events/       Event, EventBus, CoreEvents, EventHandler
-  config/       CoreConfig, LangGraphOptions, PluginSlot, load_config
+  events/       Event, EventBus, CoreEvents, WorkflowEvents, EventHandler
+  config/       CoreConfig, LangGraphOptions, WorkflowOptions, PluginSlot
   runtime/      build_core, CoreContainer  (composition root)
-tests/          testes unitários (há plugins stub apenas para os testes)
+tests/          testes unitários (há plugins stubs apenas para os testes)
 ```
 
 ## Componentes centrais
@@ -86,9 +87,15 @@ tests/          testes unitários (há plugins stub apenas para os testes)
    `agent.node.finished`, `plugin.activated`, `plugin.deactivated`.
 
 8. **Capabilities** — contratos puros (`Capability` + `LLMProvider`, `Tool`,
-   `CodeAnalyzer`, `Discoverer`) implementados por plugins. O `PluginRegistry`
-   registra e consulta providers e resolve o provider default sem conhecer
-   nenhuma implementação. Ver a seção *Capabilities e descoberta dinâmica*.
+   `CodeAnalyzer`, `Validator`, `Discoverer`) implementados por plugins. O
+   `PluginRegistry` registra e consulta providers e resolve o provider default
+   sem conhecer nenhuma implementação. Ver a seção *Capabilities e descoberta
+   dinâmica*.
+
+9. **Workflow do Code Agent** — pipeline LangGraph fixa
+   (`initialize → discovery → planning → execution → validation → review`) que
+   consome capacidades do registry, com retry e interrupção. Ver a seção
+   *Workflow do Code Agent*.
 
 ## Uso mínimo (zero plugins)
 
@@ -207,6 +214,62 @@ outro `Discoverer` para usar um mecanismo alternativo:
 
 ```python
 core = build_core(discoverers=[MeuDiscoverer()])
+```
+
+## Workflow do Code Agent
+
+O core traz a **infraestrutura de orquestração** (não um agente pronto). O
+grafo consome capacidades do registry e é montado por `WorkflowRuntime` em
+`core.agent.runtime` — o único módulo que importa LangGraph:
+
+```
+START → initialize → discovery → planning → execution → validation → review → (cond) → END
+```
+
+- **initialize** — reinicia o estado e emite `workflow.started`.
+- **discovery** — inventário de capabilities + execução dos `Discoverer`
+  registrados; sem discoverers, o contexto fica vazio e o run segue.
+- **planning** — usa o `LLMProvider` default do registry para gerar o plano.
+- **execution** — usa o LLM para executar cada task e informa as `Tool`
+  disponíveis no prompt (ainda sem tool-calling real).
+- **validation** — roda cada `Validator` registrado; sem validators, nada a
+  validar.
+- **review** — usa o LLM para aprovar/reprovar e decide se repete.
+
+`container.workflow` já vem montado por `build_core`:
+
+```python
+from core import build_core
+
+core = build_core()                 # zero plugins: monta, mas não roda sem LLM
+state = core.workflow.run(request="refatore este arquivo")
+print(state.status)                 # completed | failed
+print(state.review.approved)
+core.shutdown()
+```
+
+**Estado** (`WorkflowState`, Pydantic): `request`, `context`, `plan`,
+`current_task`, `completed_tasks`, `validations`, `review`, `errors`, `status`,
+`attempts`, `metadata`, `updated_at`.
+
+**Retry e interrupção**: `CoreConfig.workflow.max_attempts` limita as passagens
+de execução. O `review` encerra como `completed` quando aprova **e** as
+validações passam; caso contrário repete `execution` enquanto houver tentativas,
+ou encerra como `failed`.
+
+**Capability ausente**: `WorkflowContext.llm()` levanta `MissingCapabilityError`
+com mensagem explícita (ex.: sem `LLMProvider`). O runtime emite
+`workflow.failed` e propaga o erro.
+
+**Eventos**: `workflow.started`, `workflow.stage.started`,
+`workflow.stage.finished`, `workflow.retry`, `workflow.completed`,
+`workflow.failed`.
+
+```python
+from core import CoreConfig, build_core
+
+config = CoreConfig.model_validate({"workflow": {"max_attempts": 3}})
+core = build_core(config=config)
 ```
 
 ## Desenvolvimento
