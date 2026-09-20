@@ -19,21 +19,39 @@ O workflow usa o provider em três etapas: `planning`, `execution` e `review`.
 from collections.abc import Sequence
 from typing import Any
 
-from core import LLMProvider, Message
+from core import LLMChunkCallback, LLMProvider, LLMResponse, Message
 
 class MeuProvider(LLMProvider):        # kind = "llm"
     @property
     def name(self) -> str:             # único dentro do kind
         ...
 
-    def complete(self, messages: Sequence[Message], **options: Any) -> Message:
+    def complete(
+        self,
+        messages: Sequence[Message],
+        *,
+        on_chunk: LLMChunkCallback | None = None,
+        **options: Any,
+    ) -> LLMResponse:
         ...
 ```
 
 - `name` — identificador estável do provider (ex.: `"openai"`, `"ollama"`).
-- `complete(messages, **options)` — recebe a conversa e devolve a resposta do
-  assistente. É **síncrono**; `**options` é passado adiante por convenção.
+- `complete(messages, *, on_chunk=None, **options)` — recebe a conversa e devolve
+  um `LLMResponse` **acumulado**. É **síncrono**; `**options` é passado adiante
+  por convenção.
+- `on_chunk` é **observacional**: se informado, o provider chama com `LLMChunk` a
+  cada pedaço recebido. O consumidor **não** reconstrói a resposta a partir dos
+  chunks — ele usa o `LLMResponse` retornado.
 - `default = True` (atributo de classe) marca o provider como default do kind.
+
+`LLMResponse` (retorno):
+
+| Campo | Tipo | Observação |
+|---|---|---|
+| `message` | `Message` | a mensagem do assistente (`.content` atalha para `message.content`). |
+| `usage` | `LLMUsage \| None` | tokens (prompt/completion/total), quando disponível. |
+| `metadata` | `dict` | dados do provider (modelo, finish reason, ...). |
 
 `Message` (contrato do core):
 
@@ -58,7 +76,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from core import Capability, LLMProvider, Message, Plugin, PluginContext
+from core import Capability, LLMProvider, LLMResponse, Message, Plugin, PluginContext
 
 
 class EchoLLM(LLMProvider):
@@ -71,9 +89,11 @@ class EchoLLM(LLMProvider):
     def name(self) -> str:
         return "echo"
 
-    def complete(self, messages: Sequence[Message], **options: Any) -> Message:
+    def complete(self, messages: Sequence[Message], **options: Any) -> LLMResponse:
         prompt = messages[-1].content if messages else ""
-        return Message(role="assistant", content=f"[{self._model}] {prompt[:200]}")
+        return LLMResponse(
+            message=Message(role="assistant", content=f"[{self._model}] {prompt[:200]}")
+        )
 
 
 class EchoLLMPlugin(Plugin):
@@ -231,7 +251,7 @@ from typing import Any
 
 import httpx
 
-from core import LLMProvider, Message
+from core import LLMChunk, LLMChunkCallback, LLMProvider, LLMResponse, LLMUsage, Message
 
 
 class OpenAICompatibleLLM(LLMProvider):
@@ -257,7 +277,13 @@ class OpenAICompatibleLLM(LLMProvider):
     def close(self) -> None:
         self._client.close()
 
-    def complete(self, messages: Sequence[Message], **options: Any) -> Message:
+    def complete(
+        self,
+        messages: Sequence[Message],
+        *,
+        on_chunk: LLMChunkCallback | None = None,
+        **options: Any,
+    ) -> LLMResponse:
         payload: dict[str, Any] = {
             "model": self._model,
             "messages": [self._to_wire(m) for m in messages],
@@ -268,8 +294,20 @@ class OpenAICompatibleLLM(LLMProvider):
             f"{self._base_url}/chat/completions", json=payload, headers=headers
         )
         response.raise_for_status()                 # erros viram exceção -> workflow.failed
-        content = response.json()["choices"][0]["message"]["content"]
-        return Message(role="assistant", content=content)
+        data = response.json()
+        content = data["choices"][0]["message"]["content"]
+        if on_chunk is not None:                    # chunk observacional (ex.: sem streaming real)
+            on_chunk(LLMChunk(content=content))
+        usage = data.get("usage") or {}
+        return LLMResponse(
+            message=Message(role="assistant", content=content),
+            usage=LLMUsage(
+                prompt_tokens=usage.get("prompt_tokens"),
+                completion_tokens=usage.get("completion_tokens"),
+                total_tokens=usage.get("total_tokens"),
+            ),
+            metadata={"model": data.get("model", self._model)},
+        )
 
     @staticmethod
     def _to_wire(message: Message) -> dict[str, Any]:
@@ -346,8 +384,20 @@ from code_agent_plugin_meu_llm import EchoLLM
 def test_provider_returns_assistant_message() -> None:
     provider = EchoLLM()
     reply = provider.complete([Message(role="user", content="oi")])
-    assert reply.role == "assistant"
+    assert reply.message.role == "assistant"
     assert reply.content
+```
+
+Providers que suportam streaming emitem chunks pelo callback e ainda devolvem a
+resposta acumulada:
+
+```python
+def test_provider_streams_chunks() -> None:
+    chunks = []
+    reply = EchoLLM().complete(
+        [Message(role="user", content="oi")], on_chunk=chunks.append
+    )
+    assert reply.content  # resposta completa, independente dos chunks
 ```
 
 ```python

@@ -21,6 +21,10 @@ class CapabilitySource(Protocol):
         """Return the registered capabilities of ``kind`` (contract type or name)."""
         ...
 
+    def capability(self, kind: type[Any] | str, name: str) -> Capability | None:
+        """Return the capability of ``kind`` named ``name``, if registered."""
+        ...
+
     def default_capability(self, kind: type[Any]) -> Capability | None:
         """Return the default provider of ``kind``, if any."""
         ...

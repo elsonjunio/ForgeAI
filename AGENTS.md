@@ -52,13 +52,18 @@ Monorepo — every project is an independent Python package with its own
   implementation; this is what lets external plugin packages be added without
   touching the core.
 - **LangGraph is quarantined.** Only `packages/core/src/core/agent/runtime.py`
-  may import `langgraph` / `langchain_core`. Plugins and every other module work
-  with plain `AgentState` and must never touch `StateGraph`.
-- **Provider-neutral core.** `LLMProvider`, `Tool`, `CodeAnalyzer` and
-  `Discoverer` are contracts only (`core/contracts/`) — the core ships no
-  implementation and never executes a tool. Add capability as a `Plugin`
-  instead. `ToolContract` is a declarative descriptor; executable tools
-  implement the `Tool` contract.
+  and `packages/core/src/core/agent/graph.py` may import `langgraph` /
+  `langchain_core`. Plugins, contracts and every other module work with plain
+  models and must never touch `StateGraph`.
+- **Provider-neutral core.** `LLMProvider`, `Tool`, `CodeAnalyzer`, `Validator`,
+  `Discoverer` and `Planner` are contracts only (`core/contracts/`) — the core
+  ships no implementation and never executes a tool. Execution/planning models
+  (`CapabilityDescriptor`, `ExecutionPlan`/`PlanNode`/`PlanEdge`,
+  `ExecutionContext`, `NodeResult`, `ExecutionControl`) and the callback /
+  `InteractionProvider` protocols are also pure contracts. Add capability as a
+  `Plugin` instead. `ToolContract` is a declarative descriptor; executable tools
+  implement the `Tool` contract. The LLM contract returns an accumulated
+  `LLMResponse` and accepts an optional observational `on_chunk` callback.
 - **Capability registry.** Providers are registered on `activate_all` and
   removed on `deactivate_all`. `(kind, name)` must be unique
   (`DuplicateCapabilityError`); several providers of the same kind with
@@ -96,6 +101,15 @@ Monorepo — every project is an independent Python package with its own
   ends `failed`. `run`/`arun` emit `workflow.failed` and re-raise the original
   exception (any `Exception`, e.g. `MissingCapabilityError`). Events live in
   `WorkflowEvents` (`core/events/types.py`).
+- **Dynamic plan execution.** `PlanExecutor`/`GraphBuilder`
+  (`core/agent/graph.py`) turn an `ExecutionPlan` into a compiled LangGraph graph
+  and run it. Nodes resolve capabilities via `CapabilitySource.capability` and
+  execute through the `Executable` protocol (or the `Tool` adapter). The core has
+  **no fixed pipeline** and **no ReAct loop**: the graph is whatever the plan
+  says. Validation runs before building (`InvalidPlanError`,
+  `MissingCapabilityError`, `UnsupportedCapabilityError`). No automatic history
+  and no memory. `PAUSE`/`INTERRUPT` stop the run; persistent checkpointing is
+  not implemented.
 - **Graph wiring lives in `AgentRuntime`**: `START -> __core_init__ -> n1 -> ...
   -> nn -> END`. `__core_init__` is reserved; contributing a node with that id
   raises `InvalidGraphError`.

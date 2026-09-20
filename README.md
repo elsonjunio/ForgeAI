@@ -78,10 +78,13 @@ implementação dela. Qualquer pacote externo que forneça `LLMProvider`, `Tool`
 ```
 packages/core/src/core/
   agent/        AgentState, Message, AgentRuntime; WorkflowState, workflow
-                stages, WorkflowRuntime (única importação de LangGraph)
-  contracts/    Capability, CapabilitySource, LLMProvider, Tool, CodeAnalyzer,
-                Validator, Discoverer, PluginMetadata, ToolContract,
-                NodeContract, NodeContribution
+                stages, WorkflowRuntime; GraphBuilder, PlanExecutor
+                (runtime.py e graph.py são as únicas importações de LangGraph)
+  contracts/    Capability, CapabilityDescriptor, CapabilitySource, LLMProvider,
+                Tool, CodeAnalyzer, Validator, Discoverer, Planner,
+                ExecutionPlan/PlanNode/PlanEdge, ExecutionContext, NodeResult,
+                ExecutionControl, callbacks, InteractionProvider, PluginMetadata,
+                ToolContract, NodeContract, NodeContribution
   plugins/      Plugin, PluginContext, PluginRegistry, EntryPointDiscoverer
   events/       Event, EventBus, CoreEvents, WorkflowEvents, EventHandler
   config/       CoreConfig, LangGraphOptions, WorkflowOptions, PluginSlot
@@ -126,8 +129,11 @@ packages/core/tests/    testes (inclui tests/integration com plugin externo)
    `agent.started`, `agent.finished`, `agent.node.started`,
    `agent.node.finished`, `plugin.activated`, `plugin.deactivated`.
 
-8. **Capabilities** — contratos puros (`Capability` + `LLMProvider`, `Tool`,
-   `CodeAnalyzer`, `Validator`, `Discoverer`) implementados por plugins. O
+8. **Capabilities e execução** — contratos puros (`Capability` + `LLMProvider`,
+   `Tool`, `CodeAnalyzer`, `Validator`, `Discoverer`, `Planner`) e modelos de
+   execução/planejamento (`CapabilityDescriptor`, `ExecutionPlan`, `PlanNode`,
+   `PlanEdge`, `ExecutionContext`, `NodeResult`, `ExecutionControl`, callbacks,
+   `InteractionProvider`), implementados/produzidos por plugins. O
    `PluginRegistry` registra e consulta providers e resolve o provider default
    sem conhecer nenhuma implementação. Ver a seção *Capabilities e descoberta
    dinâmica*.
@@ -135,7 +141,12 @@ packages/core/tests/    testes (inclui tests/integration com plugin externo)
 9. **Workflow do Code Agent** — pipeline LangGraph fixa
    (`initialize → discovery → planning → execution → validation → review`) que
    consome capacidades do registry, com retry e interrupção. Ver a seção
-   *Workflow do Code Agent*.
+   *Workflow do Code Agent*. *(Legado; o caminho novo é a execução dinâmica.)*
+
+10. **Execução dinâmica** — `GraphBuilder`/`PlanExecutor` transformam um
+    `ExecutionPlan` (produzido por um `Planner` plugin) em um grafo LangGraph
+    executável, resolvendo capabilities pelo registry. Sem pipeline fixa e sem
+    ReAct loop no core. Ver *Execução dinâmica*.
 
 ## Uso mínimo (zero plugins)
 
@@ -191,10 +202,18 @@ com implementação:
 
 | Contrato | `kind` | Papel |
 |---|---|---|
-| `LLMProvider` | `llm` | backend de LLM (`complete`) |
+| `LLMProvider` | `llm` | backend de LLM (`complete` → `LLMResponse`, com `on_chunk` opcional) |
 | `Tool` | `tool` | ferramenta executável (`contract` + `invoke`) |
 | `CodeAnalyzer` | `analyzer` | análise de código (`analyze`) |
+| `Validator` | `validator` | validação pós-execução (`validate`) |
 | `Discoverer` | `discoverer` | descoberta de plugins (`discover`) |
+| `Planner` | `planner` | produz um `ExecutionPlan` a partir de `PlanningRequest` |
+
+Além das capabilities, o core define modelos de execução/planejamento
+(`CapabilityDescriptor`, `ExecutionPlan`/`PlanNode`/`PlanEdge`,
+`ExecutionContext`, `NodeResult`, `ExecutionControl`) e contratos de
+observabilidade/interação (callbacks, `InteractionProvider`) — todos puros, sem
+implementação.
 
 Um plugin declara providers por `declare_capabilities()` ou, dinamicamente, por
 `context.register_capability(...)` durante `initialize`:
@@ -312,6 +331,54 @@ config = CoreConfig.model_validate({"workflow": {"max_attempts": 3}})
 core = build_core(config=config)
 ```
 
+## Execução dinâmica (ExecutionPlan → LangGraph)
+
+O núcleo também executa **planos** produzidos por plugins, sem pipeline fixa:
+
+```
+Request → Planner (plugin) → ExecutionPlan → GraphBuilder → LangGraph → PlanExecutor → ExecutionResult
+```
+
+- `Planner` (capability `kind="planner"`) produz um `ExecutionPlan` e **não
+  conhece LangGraph**.
+- `container.executor` (um `PlanExecutor`) valida o plano, monta o grafo e executa.
+- Cada `PlanNode` referencia uma capability por id `"<kind>:<name>"`, resolvida
+  pelo registry. A execução usa o protocolo `Executable`
+  (`execute(request) -> NodeResult`) ou o adaptador de `Tool` (`invoke`).
+- O grafo é **dinâmico**: as arestas do plano viram edges; nós sem entrada ligam
+  ao `START` e sem saída ao `END`. Planos diferentes geram grafos diferentes.
+- `ExecutionContext` é o contexto conceitual (request, `AgentState`, metadata,
+  capabilities e histórico fornecido pelo host) e não depende de LangGraph.
+
+```python
+from core import ExecutionContext, ExecutionPlan, PlanNode, build_core
+
+core = build_core()
+plan = ExecutionPlan(
+    id="p1",
+    nodes=(PlanNode(id="step", capability="tool:meu-tool"),),
+)
+result = core.executor.run(plan, ExecutionContext(request="fazer algo"))
+print(result.status, result.results)   # completed { 'step': NodeResult(...) }
+core.shutdown()
+```
+
+**Validação antes de executar**: ids únicos, edges válidas, nodes com capability,
+capabilities disponíveis e executáveis (`InvalidPlanError`,
+`MissingCapabilityError`, `UnsupportedCapabilityError`). Erros de uma capability
+durante a execução viram `NodeResult.failed` observável.
+
+**Callbacks (opcionais)**: um `ExecutionObserver` recebe eventos
+(`execution_start`, `node_start`, `node_complete`, `execution_complete`, `error`,
+`capability_*`, ...) e um `ControlCallback` pode solicitar
+`CONTINUE`/`PAUSE`/`INTERRUPT`/`RETRY` após cada node. `PAUSE`/`INTERRUPT` param a
+execução; **não há checkpoint persistente** ainda (a limitação é documentada, não
+simulada).
+
+> O workflow fixo (`initialize → discovery → planning → execution → validation →
+> review`) é legado e permanece por compatibilidade; o caminho novo é o plano
+> dinâmico acima.
+
 ## Como criar um plugin externo
 
 Um plugin é um pacote Python normal que importa **apenas a API pública** de
@@ -323,7 +390,7 @@ Um plugin é um pacote Python normal que importa **apenas a API pública** de
 from collections.abc import Sequence
 from typing import Any
 
-from core import LLMProvider, Message, Plugin
+from core import LLMProvider, LLMResponse, Message, Plugin
 
 
 class MeuLLM(LLMProvider):
@@ -333,8 +400,8 @@ class MeuLLM(LLMProvider):
     def name(self) -> str:              # único dentro do kind
         return "meu-llm"
 
-    def complete(self, messages: Sequence[Message], **options: Any) -> Message:
-        ...                             # chame seu backend aqui
+    def complete(self, messages: Sequence[Message], **options: Any) -> LLMResponse:
+        ...                             # chame seu backend e devolva LLMResponse(message=...)
 
 
 class MeuPlugin(Plugin):

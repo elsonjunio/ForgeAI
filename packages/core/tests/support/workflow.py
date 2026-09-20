@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from core.agent.state import Message
-from core.contracts.llm import LLMProvider
+from core.contracts.llm import LLMProvider, LLMResponse
 from core.contracts.validator import ValidationInput, ValidationResult, Validator
 
 
@@ -33,7 +33,7 @@ class ScriptedLLMProvider(LLMProvider):
     def name(self) -> str:
         return self._name
 
-    def complete(self, messages: Sequence[Message], **options: Any) -> Message:
+    def complete(self, messages: Sequence[Message], **options: Any) -> LLMResponse:
         self.calls.append(list(messages))
         if self._index < len(self._responses):
             content = self._responses[self._index]
@@ -42,7 +42,7 @@ class ScriptedLLMProvider(LLMProvider):
             content = self._responses[-1]
         else:
             content = ""
-        return Message(role="assistant", content=content)
+        return LLMResponse(message=Message(role="assistant", content=content))
 
 
 class AlwaysPassValidator(Validator):

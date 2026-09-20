@@ -13,6 +13,7 @@ from typing import Any
 from core import (
     Capability,
     LLMProvider,
+    LLMResponse,
     Message,
     Plugin,
     Tool,
@@ -35,13 +36,15 @@ class FakeLLMProvider(LLMProvider):
     def name(self) -> str:
         return "integration-llm"
 
-    def complete(self, messages: Sequence[Message], **options: Any) -> Message:
+    def complete(self, messages: Sequence[Message], **options: Any) -> LLMResponse:
         prompt = messages[-1].content if messages else ""
         if "one task per line" in prompt:
-            return Message(role="assistant", content="- first task\n- second task")
-        if 'Reply "APPROVED"' in prompt:
-            return Message(role="assistant", content="APPROVED")
-        return Message(role="assistant", content="done")
+            content = "- first task\n- second task"
+        elif 'Reply "APPROVED"' in prompt:
+            content = "APPROVED"
+        else:
+            content = "done"
+        return LLMResponse(message=Message(role="assistant", content=content))
 
 
 class FakeTool(Tool):

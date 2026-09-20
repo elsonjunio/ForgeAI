@@ -9,7 +9,7 @@ from core.agent.state import Message
 from core.contracts.analyzer import AnalysisResult, CodeAnalyzer
 from core.contracts.capability import Capability
 from core.contracts.discovery import Discoverer
-from core.contracts.llm import LLMProvider
+from core.contracts.llm import LLMProvider, LLMResponse
 from core.contracts.tool import Tool, ToolContract, ToolResult
 from core.plugins.base import Plugin
 from core.plugins.context import PluginContext
@@ -27,9 +27,11 @@ class FakeLLMProvider(LLMProvider):
     def name(self) -> str:
         return self._name
 
-    def complete(self, messages: Sequence[Message], **options: Any) -> Message:
+    def complete(self, messages: Sequence[Message], **options: Any) -> LLMResponse:
         self.calls.append(messages)
-        return Message(role="assistant", content=f"{self._name}:{len(messages)}")
+        return LLMResponse(
+            message=Message(role="assistant", content=f"{self._name}:{len(messages)}")
+        )
 
 
 class FakeTool(Tool):

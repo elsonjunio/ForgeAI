@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from core.config.schema import CoreConfig
-from core.contracts.capability import Capability
+from core.contracts.capability import Capability, CapabilityDescriptor
 from core.contracts.node import NodeContribution
 from core.contracts.tool import ToolContract
 from core.errors import (
@@ -194,6 +194,22 @@ class PluginRegistry:
     def capability_kinds(self) -> list[str]:
         """Sorted ``kind`` values of all registered capabilities."""
         return sorted({capability.kind for capability in self._capabilities.values()})
+
+    def capability_descriptors(
+        self, kind: type[Any] | str | None = None
+    ) -> list[CapabilityDescriptor]:
+        """Descriptors of the registered capabilities, optionally filtered.
+
+        Descriptors carry only descriptive information, so a planner or any other
+        consumer can reason about capabilities without receiving the
+        implementations.
+        """
+        capabilities = (
+            list(self._capabilities.values())
+            if kind is None
+            else self._filter_capabilities(kind)
+        )
+        return [capability.describe() for capability in capabilities]
 
     def default_capability(self, kind: type[Any]) -> Capability | None:
         """Resolve the default provider of ``kind``.

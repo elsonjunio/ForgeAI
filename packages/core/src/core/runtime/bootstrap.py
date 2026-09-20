@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from core.agent.graph import PlanExecutor
 from core.agent.runtime import AgentRuntime, WorkflowRuntime
 from core.agent.workflow import WorkflowContext
 from core.config.schema import CoreConfig
@@ -63,10 +64,13 @@ def build_core(
         context=WorkflowContext(registry=registry, events=events, options=cfg.workflow)
     )
 
+    executor = PlanExecutor(registry=registry)
+
     return CoreContainer(
         config=cfg,
         events=events,
         registry=registry,
         runtime=runtime,
         workflow=workflow,
+        executor=executor,
     )
