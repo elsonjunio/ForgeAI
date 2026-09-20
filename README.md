@@ -7,6 +7,30 @@ filesystem/Git/shell/MCP e não contém nenhuma ferramenta concreta. Tudo isso �
 contribuído incrementalmente por *plugins*. Com **zero plugins instalados** o
 framework continua construído e executável.
 
+> Guia de integração em entrypoints (CLI, automação, jobs): [`docs/using-the-core.md`](docs/using-the-core.md).
+> Guia para criar um plugin de LLM: [`docs/creating-an-llm-plugin.md`](docs/creating-an-llm-plugin.md).
+> Guia para criar os demais plugins (tools, validators, analyzers, discoverers, nós): [`docs/creating-plugins.md`](docs/creating-plugins.md).
+
+## Monorepo
+
+Este repositório é um monorepo: cada projeto é um pacote Python independente.
+
+```
+packages/core/            core-agent   (contratos + runtime + orquestração)
+packages/plugins/<plugin> plugins      (ex.: code-agent-plugin-openai, ...)
+apps/cli/                 aplicação de linha de comando (entrypoint)
+docs/                     guias
+scripts/build_packages.py empacotamento (wheel + sdist -> zip)
+pyproject.toml            tooling compartilhado (ruff/mypy/pytest), não é pacote
+```
+
+- **Dependência:** `plugin → core-agent` e `app → core-agent` (+ plugins que o app
+  embarcar). O core nunca depende de plugin.
+- **Descoberta:** plugins instalados no mesmo ambiente são encontrados por entry
+  point (grupo `core_agent.plugins`); `build_core()` cuida disso.
+- **Distribuição:** sem PyPI. O release gera um **zip por pacote** (wheel + sdist)
+  e anexa aos artifacts/release.
+
 ## Fundamentos
 
 - **Python moderno** — anotações de tipos (3.10+), `dataclass`, `TypedDict`,
@@ -51,7 +75,7 @@ implementação dela. Qualquer pacote externo que forneça `LLMProvider`, `Tool`
 ### Estrutura
 
 ```
-src/core/
+packages/core/src/core/
   agent/        AgentState, Message, AgentRuntime; WorkflowState, workflow
                 stages, WorkflowRuntime (única importação de LangGraph)
   contracts/    Capability, CapabilitySource, LLMProvider, Tool, CodeAnalyzer,
@@ -61,7 +85,7 @@ src/core/
   events/       Event, EventBus, CoreEvents, WorkflowEvents, EventHandler
   config/       CoreConfig, LangGraphOptions, WorkflowOptions, PluginSlot
   runtime/      build_core, CoreContainer  (composition root)
-tests/          testes unitários + tests/integration (plugin externo de teste)
+packages/core/tests/    testes (inclui tests/integration com plugin externo)
 ```
 
 ## Componentes centrais
@@ -349,23 +373,38 @@ Regras a respeitar:
 - Default de provider: flag `default = True`, ou `CoreConfig.defaults`
   (`{"llm": "meu-llm"}`), ou provider único.
 
-Um exemplo executável está em `tests/integration/fake_plugin/` (usa somente a
-API pública) e é exercitado por `tests/integration/test_external_plugin.py`,
-inclusive via descoberta por entry point.
+Um exemplo executável está em `packages/core/tests/integration/fake_plugin/` (usa
+somente a API pública) e é exercitado por
+`packages/core/tests/integration/test_external_plugin.py`, inclusive via
+descoberta por entry point.
 
 ## Desenvolvimento
+
+A partir da raiz do repositório:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e "packages/core[dev]"
 ```
 
 ```bash
-pytest              # executa a suíte de testes
-ruff check src tests   # lint
-mypy src tests         # type checking (strict)
+pytest          # executa a suíte de testes (config na raiz)
+ruff check .    # lint
+mypy            # type checking (strict)
 ```
+
+### Release (zips, sem PyPI)
+
+```bash
+pip install build
+python scripts/build_packages.py --tag v0.1.0
+# gera dist/<pacote>-v0.1.0.zip (wheel + sdist de cada pacote)
+```
+
+O workflow `.github/workflows/release.yml` faz o mesmo em CI: dispara em tag `v*`
+ou manualmente (`workflow_dispatch`) e anexa os zips aos artifacts/release. O
+workflow de CI (`ci.yml`) roda lint, type checking e testes em Python 3.10–3.12.
 
 ## Escopo atual vs. próximo passo
 

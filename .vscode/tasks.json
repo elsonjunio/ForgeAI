@@ -4,7 +4,7 @@
     {
       "label": "setup: criar venv + instalar",
       "type": "shell",
-      "command": "python3 -m venv .venv && .venv/bin/python -m pip install -e '.[dev]'",
+      "command": "python3 -m venv .venv && .venv/bin/python -m pip install -e 'packages/core[dev]'",
       "options": { "cwd": "${workspaceFolder}" },
       "problemMatcher": []
     },
@@ -19,14 +19,14 @@
     {
       "label": "lint",
       "type": "shell",
-      "command": "${workspaceFolder}/.venv/bin/ruff check src tests",
+      "command": "${workspaceFolder}/.venv/bin/ruff check .",
       "options": { "cwd": "${workspaceFolder}" },
       "problemMatcher": []
     },
     {
       "label": "typecheck",
       "type": "shell",
-      "command": "${workspaceFolder}/.venv/bin/mypy src tests",
+      "command": "${workspaceFolder}/.venv/bin/mypy",
       "options": { "cwd": "${workspaceFolder}" },
       "problemMatcher": []
     },

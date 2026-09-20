@@ -8,29 +8,40 @@ zero plugins installed the framework still builds and runs.
 ## Commands
 
 ```bash
-python -m venv .venv && source .venv/bin/activate && pip install -e ".[dev]"
+python -m venv .venv && source .venv/bin/activate && pip install -e "packages/core[dev]"
 
 .venv/bin/pytest                       # full suite (fast)
-.venv/bin/pytest tests/test_runtime.py::test_zero_plugins_runs_end_to_end   # single test
-.venv/bin/ruff check src tests         # lint
-.venv/bin/mypy src tests               # strict type check
+.venv/bin/pytest packages/core/tests/test_runtime.py::test_zero_plugins_runs_end_to_end
+.venv/bin/ruff check .                 # lint (ruff reads the root pyproject)
+.venv/bin/mypy                         # strict type check (files from root pyproject)
 ```
 
-Run all three before finishing; they must be clean. There is **no CI and no
-pre-commit**, so these commands are the only gates.
+Run all three before finishing; they must be clean. CI
+(`.github/workflows/ci.yml`) runs the same checks on Python 3.10–3.12; there is
+no pre-commit.
 
 Target is Python **3.10+** (`requires-python`, ruff `target-version`, mypy
 `python_version`) even though the local venv may be 3.11. Ruff line length is 100.
 
 ## Layout
 
-- `src/core/` — the shipped package. Import as `core.*`, never `src.core.*`
-  (pytest `pythonpath = ["src"]`, mypy `mypy_path = ["src"]`).
-- `tests/` — pytest suite. `tests/support/` holds stubs used only by tests and is
-  excluded from mypy. `tests/integration/fake_plugin/` is an external-style
-  plugin that imports only the public `core` API and is exercised through
-  entry-point discovery (`tests/integration/test_external_plugin.py`).
-- `pyproject.toml` — single source of truth for deps, ruff, mypy, pytest config.
+Monorepo — every project is an independent Python package with its own
+`pyproject.toml`:
+
+- `packages/core/` — the `core-agent` library.
+  - `packages/core/src/core/` — import as `core.*`, never `src.core.*`
+    (pytest `pythonpath` and mypy `mypy_path` point here, set at the root).
+  - `packages/core/tests/` — pytest suite (co-located). `tests/support/` holds
+    stubs used only by tests and is excluded from mypy.
+    `tests/integration/fake_plugin/` is an external-style plugin that imports
+    only the public `core` API and is loaded via entry-point discovery.
+  - `packages/core/examples/` — `hello_core.py`.
+- `packages/plugins/<plugin>/` — plugin packages (none yet; see its README).
+- `apps/cli/` — the CLI entrypoint package (placeholder for now).
+- `pyproject.toml` (repo root) — shared tooling only (ruff/mypy/pytest), **not**
+  an installable package. Run `ruff check .`, `mypy`, `pytest` from the root.
+- `scripts/build_packages.py` — builds wheel+sdist and zips every package under
+  `packages/` and `apps/` (no PyPI); wired into `.github/workflows/`.
 
 ## Architecture constraints (easy to violate)
 
@@ -39,9 +50,9 @@ Target is Python **3.10+** (`requires-python`, ruff `target-version`, mypy
   `core.plugins.*` types. `PluginRegistry` is just one `CapabilitySource`
   implementation; this is what lets external plugin packages be added without
   touching the core.
-- **LangGraph is quarantined.** Only `src/core/agent/runtime.py` may import
-  `langgraph` / `langchain_core`. Plugins and every other module work with plain
-  `AgentState` and must never touch `StateGraph`.
+- **LangGraph is quarantined.** Only `packages/core/src/core/agent/runtime.py`
+  may import `langgraph` / `langchain_core`. Plugins and every other module work
+  with plain `AgentState` and must never touch `StateGraph`.
 - **Provider-neutral core.** `LLMProvider`, `Tool`, `CodeAnalyzer` and
   `Discoverer` are contracts only (`core/contracts/`) — the core ships no
   implementation and never executes a tool. Add capability as a `Plugin`

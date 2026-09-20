@@ -5,11 +5,11 @@
       "name": "Python: exemplo core (F5)",
       "type": "debugpy",
       "request": "launch",
-      "program": "${workspaceFolder}/examples/hello_core.py",
+      "program": "${workspaceFolder}/packages/core/examples/hello_core.py",
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "python": "${workspaceFolder}/.venv/bin/python",
-      "env": { "PYTHONPATH": "${workspaceFolder}/src" }
+      "env": { "PYTHONPATH": "${workspaceFolder}/packages/core/src" }
     },
     {
       "name": "Python: arquivo atual",
@@ -19,7 +19,7 @@
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "python": "${workspaceFolder}/.venv/bin/python",
-      "env": { "PYTHONPATH": "${workspaceFolder}/src" }
+      "env": { "PYTHONPATH": "${workspaceFolder}/packages/core/src" }
     },
     {
       "name": "pytest: arquivo atual",
