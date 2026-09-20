@@ -15,7 +15,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from core.contracts.capability import Capability
+from core.contracts.capability import Capability, CapabilityDescriptor
 
 
 class ToolContract(BaseModel):
@@ -60,6 +60,17 @@ class Tool(Capability):
     def name(self) -> str:
         """Tool name, taken from the declarative contract."""
         return self.contract.name
+
+    def describe(self) -> CapabilityDescriptor:
+        """Expose the tool's description and JSON-schema parameters."""
+        return CapabilityDescriptor(
+            id=f"{self.kind}:{self.name}",
+            name=self.name,
+            kind=self.kind,
+            description=self.contract.description,
+            groups=tuple(self.groups),
+            parameters=dict(self.contract.parameters),
+        )
 
     @property
     @abstractmethod

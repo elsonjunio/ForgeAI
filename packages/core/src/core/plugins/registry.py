@@ -6,13 +6,17 @@ from collections.abc import Iterable
 from typing import Any
 
 from core.config.schema import CoreConfig
-from core.contracts.capability import Capability
+from core.contracts.capability import Capability, CapabilityDescriptor
+from core.contracts.group import Group
+from core.contracts.interaction import InteractionProvider
 from core.contracts.node import NodeContribution
+from core.contracts.planning import Planner
 from core.contracts.tool import ToolContract
 from core.errors import (
     AmbiguousCapabilityError,
     CapabilityError,
     DuplicateCapabilityError,
+    DuplicateGroupError,
     DuplicatePluginError,
     InvalidPluginError,
 )
@@ -41,9 +45,16 @@ class PluginRegistry:
     descriptions and providers, which the runtime materializes.
     """
 
-    def __init__(self, *, config: CoreConfig, events: EventBus) -> None:
+    def __init__(
+        self,
+        *,
+        config: CoreConfig,
+        events: EventBus,
+        interaction: InteractionProvider | None = None,
+    ) -> None:
         self._config = config
         self._events = events
+        self._interaction = interaction
         self._plugins: dict[str, Plugin] = {}
         self._contexts: dict[str, PluginContext] = {}
         self._subscriptions: dict[str, list[Subscription]] = {}
@@ -52,6 +63,9 @@ class PluginRegistry:
         self._capability_order: list[CapabilityKey] = []
         self._capabilities_by_plugin: dict[str, list[CapabilityKey]] = {}
         self._explicit_defaults: set[CapabilityKey] = set()
+        self._groups: dict[str, Group] = {}
+        self._group_order: list[str] = []
+        self._groups_by_plugin: dict[str, list[str]] = {}
 
     @property
     def config(self) -> CoreConfig:
@@ -62,6 +76,11 @@ class PluginRegistry:
     def events(self) -> EventBus:
         """The event bus plugins publish and subscribe on."""
         return self._events
+
+    @property
+    def interaction(self) -> InteractionProvider | None:
+        """Host-provided interaction mechanism, if any."""
+        return self._interaction
 
     def register(self, plugin: Plugin) -> None:
         """Store ``plugin``, rejecting invalid ids and duplicates.
@@ -123,11 +142,15 @@ class PluginRegistry:
             ]
             self._subscriptions[plugin_id] = subscriptions
 
+            for group in plugin.declare_groups():
+                self._add_group(group, plugin_id=plugin_id)
+
             context = PluginContext(
                 plugin_id=plugin_id,
                 config=self._config.slot(plugin_id),
                 events=self._events,
                 registry=self,
+                interaction=self._interaction,
             )
             plugin.initialize(context)
             for capability in plugin.declare_capabilities():
@@ -151,6 +174,7 @@ class PluginRegistry:
             plugin = self._plugins[plugin_id]
             plugin.shutdown()
             self._remove_capabilities(plugin_id)
+            self._remove_groups(plugin_id)
             for subscription in self._subscriptions.pop(plugin_id, ()):
                 self._events.unsubscribe(subscription)
             self._contexts.pop(plugin_id, None)
@@ -194,6 +218,96 @@ class PluginRegistry:
     def capability_kinds(self) -> list[str]:
         """Sorted ``kind`` values of all registered capabilities."""
         return sorted({capability.kind for capability in self._capabilities.values()})
+
+    def capability_descriptors(
+        self,
+        kind: type[Any] | str | None = None,
+        group: str | None = None,
+    ) -> list[CapabilityDescriptor]:
+        """Descriptors of the registered capabilities, optionally filtered.
+
+        Descriptors carry only descriptive information, so a planner or any other
+        consumer can reason about capabilities without receiving the
+        implementations.
+        """
+        capabilities = (
+            list(self._capabilities.values())
+            if kind is None
+            else self._filter_capabilities(kind)
+        )
+        if group is not None:
+            capabilities = [cap for cap in capabilities if group in cap.groups]
+        return [capability.describe() for capability in capabilities]
+
+    # -- groups --------------------------------------------------------------
+
+    def groups(self) -> list[Group]:
+        """Declared groups, in declaration order."""
+        return [self._groups[group_id] for group_id in self._group_order]
+
+    def group(self, group_id: str) -> Group | None:
+        """Return the declared group with ``group_id``, if any."""
+        return self._groups.get(group_id)
+
+    def group_ids(self) -> list[str]:
+        """Ids of the declared groups, in declaration order."""
+        return list(self._group_order)
+
+    def capabilities_in_group(self, group_id: str) -> list[Capability]:
+        """Capabilities that belong to ``group_id`` (declared or implicit)."""
+        return [
+            capability
+            for capability in self._capabilities.values()
+            if group_id in capability.groups
+        ]
+
+    def capability_descriptors_in_group(
+        self, group_id: str
+    ) -> list[CapabilityDescriptor]:
+        """Descriptors of the capabilities that belong to ``group_id``."""
+        return [cap.describe() for cap in self.capabilities_in_group(group_id)]
+
+    def plugin_groups(self, plugin_id: str) -> list[str]:
+        """Groups a plugin belongs to (explicit plus its capabilities')."""
+        plugin = self._plugins.get(plugin_id)
+        if plugin is None:
+            return []
+        result: set[str] = set(plugin.groups)
+        for key in self._capabilities_by_plugin.get(plugin_id, ()):
+            capability = self._capabilities.get(key)
+            if capability is not None:
+                result.update(capability.groups)
+        return sorted(result)
+
+    def plugin_ids_in_group(self, group_id: str) -> list[str]:
+        """Ids of the plugins that belong to ``group_id``."""
+        return [
+            plugin_id
+            for plugin_id in self._plugins
+            if group_id in self.plugin_groups(plugin_id)
+        ]
+
+    # -- planners ------------------------------------------------------------
+
+    def planners(self, group: str | None = None) -> list[Planner]:
+        """Registered planners, optionally restricted to ``group``.
+
+        A planner with no groups is global; a planner with groups is specialized.
+        """
+        planners = [
+            capability
+            for capability in self._capabilities.values()
+            if isinstance(capability, Planner)
+        ]
+        if group is not None:
+            planners = [planner for planner in planners if group in planner.groups]
+        return planners
+
+    def planner_descriptors(
+        self, group: str | None = None
+    ) -> list[CapabilityDescriptor]:
+        """Descriptors of the registered planners, optionally restricted."""
+        return [planner.describe() for planner in self.planners(group)]
 
     def default_capability(self, kind: type[Any]) -> Capability | None:
         """Resolve the default provider of ``kind``.
@@ -291,6 +405,19 @@ class PluginRegistry:
             self._explicit_defaults.discard(key)
             if key in self._capability_order:
                 self._capability_order.remove(key)
+
+    def _add_group(self, group: Group, *, plugin_id: str) -> None:
+        if group.id in self._groups:
+            raise DuplicateGroupError(f"group {group.id!r} is already declared")
+        self._groups[group.id] = group
+        self._group_order.append(group.id)
+        self._groups_by_plugin.setdefault(plugin_id, []).append(group.id)
+
+    def _remove_groups(self, plugin_id: str) -> None:
+        for group_id in self._groups_by_plugin.pop(plugin_id, ()):
+            self._groups.pop(group_id, None)
+            if group_id in self._group_order:
+                self._group_order.remove(group_id)
 
     def _configured_default(self, kind: type[Any]) -> str | None:
         defaults = self._config.defaults

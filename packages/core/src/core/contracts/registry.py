@@ -1,7 +1,7 @@
 """Capability registry contract.
 
 A narrow, structural interface for resolving capabilities. ``PluginRegistry``
-implements it; orchestration code (for example ``WorkflowContext``) depends on
+implements it; orchestration code (for example the plan executor) depends on
 this protocol rather than on the concrete registry, keeping the agent layer
 independent of the plugin implementation layer.
 """
@@ -19,6 +19,10 @@ class CapabilitySource(Protocol):
 
     def capabilities(self, kind: type[Any] | str) -> list[Capability]:
         """Return the registered capabilities of ``kind`` (contract type or name)."""
+        ...
+
+    def capability(self, kind: type[Any] | str, name: str) -> Capability | None:
+        """Return the capability of ``kind`` named ``name``, if registered."""
         ...
 
     def default_capability(self, kind: type[Any]) -> Capability | None:

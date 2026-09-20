@@ -45,3 +45,19 @@ class MissingCapabilityError(CapabilityError):
 
 class DiscoveryError(PluginError):
     """Raised when a plugin cannot be discovered or materialized."""
+
+
+class InvalidPlanError(CoreError):
+    """Raised when an :class:`ExecutionPlan` is structurally invalid."""
+
+
+class UnsupportedCapabilityError(CapabilityError):
+    """Raised when a capability cannot run as a plan node."""
+
+
+class GraphBuildError(CoreError):
+    """Raised when the execution graph cannot be constructed."""
+
+
+class DuplicateGroupError(CoreError):
+    """Raised when two plugins declare the same group id."""

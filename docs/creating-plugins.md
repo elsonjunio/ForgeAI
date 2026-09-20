@@ -13,11 +13,11 @@ validação, um analisador, uma fonte de plugins) vive no seu pacote.
 
 | Tipo | `kind` | Registro | O que o core faz |
 |---|---|---|---|
-| `Tool` | `tool` | `declare_capabilities` | A etapa `execution` lista os nomes no prompt; disponível via registry. *Tool-calling real ainda não está no workflow base.* |
-| `Validator` | `validator` | `declare_capabilities` | A etapa `validation` executa **todos**; todos precisam passar. Sem validators, nada a validar. |
-| `CodeAnalyzer` | `analyzer` | `declare_capabilities` | O workflow base **não** chama analyzers; ficam disponíveis para plugins/consumidores. |
-| `Discoverer` | `discoverer` | `declare_capabilities` | A etapa `discovery` chama `discover()`. Também pode ser usado como mecanismo em `build_core(discoverers=...)`. |
-| `NodeContribution` | — | `declare_nodes` | Alimenta o **runtime genérico** (`container.runtime`), não o workflow. |
+| `Tool` | `tool` | `declare_capabilities` | Executável como `PlanNode` (via adaptador `Tool.invoke`); disponível via registry. |
+| `Validator` | `validator` | `declare_capabilities` | Capacidade genérica de validação; quem quiser (planner/capability) a invoca. |
+| `CodeAnalyzer` | `analyzer` | `declare_capabilities` | Capacidade genérica; disponível para plugins/consumidores. |
+| `Discoverer` | `discoverer` | `declare_capabilities` | Fonte de plugins; também é o mecanismo em `build_core(discoverers=...)`. |
+| `NodeContribution` | — | `declare_nodes` | Alimenta o **runtime genérico** (`container.runtime`). |
 | Event handler | — | `event_handlers` | Assinado na ativação, removido no shutdown. |
 
 ## Esqueleto comum
@@ -88,15 +88,16 @@ class WordCountTool(Tool):
 - `parameters` é o JSON-Schema que será oferecido ao modelo quando o tool-calling
   for implementado. Mantenha-o fiel ao que `invoke` espera.
 
-> Estado atual: o workflow base **não invoca** tools — ele informa os nomes
-> disponíveis no prompt de `execution`. Um plugin pode invocar tools
-> programaticamente via `container.registry.capabilities(Tool)`.
+> Estado atual: o core **não** faz tool-calling automático. Uma `Tool` pode ser
+> executada como nó de um `ExecutionPlan` (o `PlanExecutor` adapta `invoke`) ou
+> programaticamente via `container.registry.capabilities(Tool)`. Tool-calling
+> dirigido pelo LLM é responsabilidade de um planner/capability.
 
 ## 2. `Validator` — regra de validação
 
-Validators rodam na etapa `validation`, depois de `execution`. Se **qualquer**
-validator reprovar, o workflow não conclui como `completed` (e tenta retry
-conforme `workflow.max_attempts`).
+Validators são capacidades genéricas: quem decide chamá-las é o planner, uma
+capability ou a aplicação. Se um validator reprovar, o consumidor decide o que
+fazer (retry, interromper, ...).
 
 ```python
 from core import ValidationInput, ValidationResult, Validator
@@ -114,15 +115,14 @@ class NonEmptyOutputValidator(Validator):
 ```
 
 - Entrada: `ValidationInput(request, task, output)`.
-- Saída: `ValidationResult(passed, messages=(), metadata={})`. `messages` aparece
-  em `WorkflowState.validations` e no prompt de `review`.
-- Sem validators registrados, a etapa é um no-op (nada a validar).
+- Saída: `ValidationResult(passed, messages=(), metadata={})`.
+- Sem validators registrados, simplesmente não há o que validar.
 
 ## 3. `CodeAnalyzer` — análise de código
 
 Analisadores são capacidades reutilizáveis (linters, contagem, índice de
-símbolos). O workflow base não os executa; outros plugins/consumidores podem
-usar. O padrão comum é expor um analyzer **e** um validator que o consome.
+símbolos). O core não os executa sozinho; plugins/consumidores os usam. O padrão
+comum é expor um analyzer **e** um validator que o consome.
 
 ```python
 from core import AnalysisResult, CodeAnalyzer
@@ -154,7 +154,8 @@ O `Discoverer` tem **dois papéis**:
 1. **Mecanismo de descoberta no build** — passado a
    `build_core(discoverers=[...])`; substitui/complementa o
    `EntryPointDiscoverer` padrão.
-2. **Capability registrada** — consultada pela etapa `discovery` do workflow.
+2. **Capability registrada** — disponível no registry para quem quiser usá-la
+   (um planner, uma capability, a aplicação).
 
 ```python
 from collections.abc import Iterable
@@ -190,14 +191,13 @@ Uso como mecanismo de build:
 core = build_core(discoverers=[StaticDiscoverer([MeuPlugin()])])
 ```
 
-`discover()` pode levantar `DiscoveryError`; a etapa `discovery` captura
-`CoreError` e segue com o contexto parcial.
+`discover()` pode levantar `DiscoveryError`; quem consome decide como tratar.
 
 ## 5. Nós para o runtime genérico
 
-Além do workflow, o core tem um grafo genérico
-(`START → __core_init__ → n1 → … → nn → END`) montado a partir de
-`NodeContribution`. Cada nó é uma transformação pura de `AgentState`.
+O core tem um grafo genérico (`START → __core_init__ → n1 → … → nn → END`)
+montado a partir de `NodeContribution`. Cada nó é uma transformação pura de
+`AgentState`.
 
 ```python
 from core import AgentState, NodeContract, NodeContribution, Plugin
@@ -232,7 +232,8 @@ Regras:
   ciclos/inconsistências falham na construção.
 - `__core_init__` é reservado.
 - `AgentState` usa `extra="forbid"`; dados livres vão em `metadata`.
-- O workflow do Code Agent **não** usa esses nós.
+- Para execução dinâmica de planos, use o protocolo `Executable`
+  (`execute(request) -> NodeResult`).
 
 ## 6. Event handlers — observabilidade
 
@@ -252,23 +253,23 @@ class LoggingPlugin(Plugin):
         self.seen: list[str] = []
 
     def event_handlers(self) -> dict[str, EventHandler]:
-        return {"workflow.stage.finished": self._on_event}
+        return {"plugin.activated": self._on_event}
 
     def _on_event(self, event: Event[Any]) -> None:
         self.seen.append(event.source)
 ```
 
-Eventos úteis: `workflow.started`, `workflow.stage.started/finished`,
-`workflow.retry`, `workflow.completed`, `workflow.failed`; e `agent.*` /
-`plugin.*` do runtime genérico (`CoreEvents`, `WorkflowEvents`).
+Eventos úteis: `plugin.activated`/`plugin.deactivated` e `agent.started`,
+`agent.finished`, `agent.node.started/finished` (`CoreEvents`). O executor
+dinâmico usa `ExecutionObserver`/`ExecutionEvent` (não o `EventBus`).
 
 > Handlers rodam de forma síncrona no fluxo de publicação — não bloqueie.
 
 ## 7. Capability customizada (novo `kind`)
 
 Se precisa de um tipo que o core não conhece, crie um subtipo de `Capability`.
-Ele é registrado e consultável como qualquer outra capability; o workflow base
-ignora kinds desconhecidos, mas plugins e consumidores podem usá-lo.
+Ele é registrado e consultável como qualquer outra capability; plugins e
+consumidores podem usá-lo (e, se implementar `execute`, pode ser um nó de plano).
 
 ```python
 from abc import abstractmethod
@@ -351,9 +352,9 @@ def test_registry_queries() -> None:
         core.shutdown()
 ```
 
-Para testar o **workflow ponta a ponta** de forma estável, use um provider de LLM
-roteirizado (veja `packages/core/tests/support/workflow.py` do core) em vez de
-depender do texto dos prompts internos.
+Para testar planejamento/execução ponta a ponta de forma estável, use um provider
+de LLM roteirizado (veja `packages/core/tests/support/capabilities.py` do core)
+em vez de depender de texto específico de prompt.
 
 ## 10. Checklist
 
@@ -367,5 +368,6 @@ depender do texto dos prompts internos.
 - [ ] Entry point no grupo `core_agent.plugins`.
 - [ ] Nenhum import de `langgraph`/`langchain_core` nem de módulos internos do core.
 
-Veja também: [`using-the-core.md`](using-the-core.md) (integrar em um entrypoint) e
+Veja também: [`architecture.md`](architecture.md) (fronteiras e limites atuais),
+[`using-the-core.md`](using-the-core.md) (integrar em um entrypoint) e
 [`creating-an-llm-plugin.md`](creating-an-llm-plugin.md) (provider de LLM).

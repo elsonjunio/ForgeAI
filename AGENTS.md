@@ -35,7 +35,8 @@ Monorepo — every project is an independent Python package with its own
   - `packages/core/tests/` — pytest suite (co-located). `tests/support/` holds
     stubs used only by tests and is excluded from mypy.
     `tests/integration/fake_plugin/` is an external-style plugin that imports
-    only the public `core` API and is loaded via entry-point discovery.
+    only the public `core` API and is exercised through entry-point discovery and
+    the dynamic plan executor.
   - `packages/core/examples/` — `hello_core.py`.
 - `packages/plugins/<plugin>/` — plugin packages (none yet; see its README).
 - `apps/cli/` — the CLI entrypoint package (placeholder for now).
@@ -52,13 +53,20 @@ Monorepo — every project is an independent Python package with its own
   implementation; this is what lets external plugin packages be added without
   touching the core.
 - **LangGraph is quarantined.** Only `packages/core/src/core/agent/runtime.py`
-  may import `langgraph` / `langchain_core`. Plugins and every other module work
-  with plain `AgentState` and must never touch `StateGraph`.
-- **Provider-neutral core.** `LLMProvider`, `Tool`, `CodeAnalyzer` and
-  `Discoverer` are contracts only (`core/contracts/`) — the core ships no
-  implementation and never executes a tool. Add capability as a `Plugin`
-  instead. `ToolContract` is a declarative descriptor; executable tools
-  implement the `Tool` contract.
+  and `packages/core/src/core/agent/graph.py` may import `langgraph` /
+  `langchain_core`. Plugins, contracts and every other module work with plain
+  models and must never touch `StateGraph`.
+- **Provider-neutral core.** `LLMProvider`, `Tool`, `CodeAnalyzer`, `Validator`,
+  `Discoverer`, `Planner` and `ComplexityEvaluator` are contracts only
+  (`core/contracts/`) — the core ships no implementation and never executes a
+  tool. Execution/planning models
+  (`CapabilityDescriptor`, `ExecutionPlan`/`PlanNode`/`PlanEdge`,
+  `ExecutionContext`, `NodeResult`, `ExecutionControl`), the `Group` model and
+  the callback / `InteractionProvider` protocols are also pure contracts. Add
+  capability as a `Plugin` instead. `ToolContract` is a declarative descriptor;
+  executable tools implement the `Tool` contract. The LLM contract returns an
+  accumulated `LLMResponse` and accepts an optional observational `on_chunk`
+  callback.
 - **Capability registry.** Providers are registered on `activate_all` and
   removed on `deactivate_all`. `(kind, name)` must be unique
   (`DuplicateCapabilityError`); several providers of the same kind with
@@ -79,23 +87,40 @@ Monorepo — every project is an independent Python package with its own
   `plugins=` and discovered plugins are registered together (duplicate ids
   raise `DuplicatePluginError`). Other mechanisms implement the `Discoverer`
   contract.
-- **Code-agent workflow.** `WorkflowRuntime` (in `core/agent/runtime.py`, the
-  only module allowed to import LangGraph) builds the fixed pipeline
-  `initialize → discovery → planning → execution → validation → review`. Stage
-  logic lives in `core/agent/workflow.py` and must **not** import `langgraph`
-  or concrete plugins. `build_core` always exposes `container.workflow`.
-- **Workflow capabilities.** `planning`/`execution`/`review` need the default
-  `LLMProvider`; when absent, `WorkflowContext.llm()` raises
-  `MissingCapabilityError`. `discovery` runs registered `Discoverer`s
-  (none is fine), `execution` reads `Tool`s, `validation` runs registered
-  `Validator`s (none means nothing to validate). No tools/discoverers/
-  validators → the workflow still runs; build never requires an LLM.
-- **Workflow retry/status.** `CoreConfig.workflow.max_attempts` caps execution
-  passes. `review` ends `completed` only if approved **and** all validations
-  passed; otherwise it retries `execution` while `attempts < max_attempts`, else
-  ends `failed`. `run`/`arun` emit `workflow.failed` and re-raise the original
-  exception (any `Exception`, e.g. `MissingCapabilityError`). Events live in
-  `WorkflowEvents` (`core/events/types.py`).
+- **Groups.** `Group` is a declarative, many-to-many area (`code`,
+  `filesystem`, `version-control`, ...). `Capability.groups` and `Plugin.groups`
+  reference groups by id; a plugin belongs to a group explicitly or via its
+  capabilities. `Plugin.declare_groups()` describes groups; two plugins declaring
+  the same group id raise `DuplicateGroupError`. Query via
+  `registry.groups()/group()/group_ids()/capabilities_in_group()/
+  plugin_ids_in_group()`.
+- **Planners and scopes.** `Planner` (`kind="planner"`) is a capability: no groups
+  means global, groups means specialized. The core only discovers and groups them
+  (`registry.planners(group=None)`, `registry.planner_descriptors(...)`);
+  composing a global planner with specialized ones is the host/plugin's job.
+  Planners never execute capabilities — they return an `ExecutionPlan`.
+- **Complexity evaluator.** `ComplexityEvaluator` (`kind="complexity"`) is a
+  contract only; no heuristic lives in the core.
+- **Interaction.** `InteractionProvider` is host-provided (never a capability): it
+  reaches plugins via `PluginContext.interaction` and executable capabilities via
+  `NodeExecutionRequest.interaction`. `build_core(interaction=...)` wires it.
+- **Dynamic plan execution.** `PlanExecutor`/`NodeRunner`/`GraphBuilder`
+  (`core/agent/graph.py`) turn an `ExecutionPlan` into a compiled LangGraph graph
+  and run it. `GraphBuilder` only does structural validation + wiring (it does
+  **not** execute or emit); `NodeRunner` resolves capabilities via
+  `CapabilitySource.capability`, executes through the `Executable` protocol (or
+  the `Tool` adapter), handles retry/control and emits node events;
+  `PlanExecutor` orchestrates build + invoke + finalize. The core has
+  **no fixed pipeline** and **no ReAct loop**: the graph is whatever the plan
+  says. Validation runs before building (`InvalidPlanError`,
+  `MissingCapabilityError`, `UnsupportedCapabilityError`). No automatic history
+  and no memory. `PAUSE`/`INTERRUPT` stop the run; persistent checkpointing is
+  not implemented.
+- **Two runtimes.** `AgentRuntime` (`core/agent/runtime.py`) is the *generic node
+  runtime* (plugin-contributed `NodeContribution`s over `AgentState`).
+  `NodeRunner`/`PlanExecutor` (`core/agent/graph.py`) are the *plan runtime*
+  (`ExecutionPlan` -> LangGraph). Both know LangGraph; neither knows concrete
+  plugins.
 - **Graph wiring lives in `AgentRuntime`**: `START -> __core_init__ -> n1 -> ...
   -> nn -> END`. `__core_init__` is reserved; contributing a node with that id
   raises `InvalidGraphError`.
@@ -118,8 +143,16 @@ Monorepo — every project is an independent Python package with its own
   TOML/YAML.
 - Plugins absent from `CoreConfig.plugins` are **enabled by default**
   (`is_enabled`), so zero-configuration works.
+- **Current limits (do not assume they exist):** no persistent checkpoint
+  (`PAUSE`/`INTERRUPT` only stop the run), plans are DAGs (no cycles), the plan
+  execution state is a shared mutable object, `PlanExecutor.run` is sync (no
+  `arun`), the LLM contract has no tool-calls and there is no tool-calling loop,
+  no memory/RAG, and `CapabilityDescriptor.constraints` is descriptive only. The
+  canonical list is in `docs/architecture.md`.
 
 ## Docs
 
-`README.md` (Portuguese) covers layers, the public API, and a plugin example.
+`docs/architecture.md` is the canonical reference for responsibilities, layer
+boundaries and current limits — keep it in sync with behavior changes.
+`README.md` (Portuguese) covers layers, the public API and a plugin example.
 Trust the code when docs and config disagree.

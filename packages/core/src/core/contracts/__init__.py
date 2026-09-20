@@ -1,10 +1,44 @@
 """Contracts: pure interfaces and declarative models for extending the core."""
 
 from core.contracts.analyzer import AnalysisResult, CodeAnalyzer
-from core.contracts.capability import Capability
+from core.contracts.callbacks import (
+    ControlCallback,
+    ExecutionEvent,
+    ExecutionEventKind,
+    ExecutionObserver,
+)
+from core.contracts.capability import Capability, CapabilityDescriptor
+from core.contracts.complexity import (
+    ComplexityAssessment,
+    ComplexityEvaluator,
+    ComplexityLevel,
+)
 from core.contracts.discovery import Discoverer
-from core.contracts.llm import LLMProvider
+from core.contracts.execution import (
+    ControlAction,
+    Executable,
+    ExecutionContext,
+    ExecutionControl,
+    ExecutionResult,
+    NodeExecutionRequest,
+    NodeResult,
+)
+from core.contracts.group import Group
+from core.contracts.interaction import (
+    InteractionProvider,
+    InteractionRequest,
+    InteractionResponse,
+)
+from core.contracts.llm import (
+    LLMChunk,
+    LLMChunkCallback,
+    LLMProvider,
+    LLMResponse,
+    LLMUsage,
+)
 from core.contracts.node import AgentNode, NodeContract, NodeContribution
+from core.contracts.plan import ExecutionPlan, PlanEdge, PlanNode
+from core.contracts.planning import Planner, PlanningRequest, PlanningResult
 from core.contracts.plugin import PluginMetadata
 from core.contracts.registry import CapabilitySource
 from core.contracts.tool import Tool, ToolContract, ToolResult
@@ -14,12 +48,41 @@ __all__ = [
     "AgentNode",
     "AnalysisResult",
     "Capability",
+    "CapabilityDescriptor",
     "CapabilitySource",
     "CodeAnalyzer",
+    "ComplexityAssessment",
+    "ComplexityEvaluator",
+    "ComplexityLevel",
+    "ControlAction",
+    "ControlCallback",
     "Discoverer",
+    "ExecutionContext",
+    "ExecutionControl",
+    "ExecutionEvent",
+    "ExecutionEventKind",
+    "ExecutionObserver",
+    "ExecutionPlan",
+    "ExecutionResult",
+    "Executable",
+    "Group",
+    "InteractionProvider",
+    "InteractionRequest",
+    "InteractionResponse",
+    "LLMChunk",
+    "LLMChunkCallback",
     "LLMProvider",
+    "LLMResponse",
+    "LLMUsage",
     "NodeContract",
     "NodeContribution",
+    "NodeExecutionRequest",
+    "NodeResult",
+    "PlanEdge",
+    "PlanNode",
+    "Planner",
+    "PlanningRequest",
+    "PlanningResult",
     "PluginMetadata",
     "Tool",
     "ToolContract",

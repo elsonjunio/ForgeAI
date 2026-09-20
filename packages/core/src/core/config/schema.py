@@ -33,19 +33,6 @@ class LangGraphOptions(BaseModel):
     recursion_limit: int = Field(default=25, ge=1, le=1_000_000)
 
 
-class WorkflowOptions(BaseModel):
-    """Knobs for the code-agent workflow orchestration.
-
-    Args:
-        max_attempts: maximum number of ``execution`` passes (>= 1). A value of
-            2 means the initial attempt plus one retry.
-        recursion_limit: LangGraph recursion budget for the workflow graph.
-    """
-
-    max_attempts: int = Field(default=2, ge=1, le=100)
-    recursion_limit: int = Field(default=50, ge=1, le=1_000_000)
-
-
 class CoreConfig(BaseModel):
     """Top-level configuration of a core instance.
 
@@ -59,7 +46,6 @@ class CoreConfig(BaseModel):
             example ``{"llm": "openai"}``) or by contract class name. Used by
             ``PluginRegistry.default_capability`` without coupling the core to
             any concrete provider.
-        workflow: options for the code-agent workflow orchestration.
     """
 
     app_name: str = "core-agent"
@@ -68,7 +54,6 @@ class CoreConfig(BaseModel):
     plugins: dict[str, PluginSlot] = Field(default_factory=dict)
     langgraph: LangGraphOptions = Field(default_factory=LangGraphOptions)
     defaults: dict[str, str] = Field(default_factory=dict)
-    workflow: WorkflowOptions = Field(default_factory=WorkflowOptions)
 
     def slot(self, plugin_id: str) -> PluginSlot:
         """Return the slot for ``plugin_id``, defaulting to an enabled empty one."""

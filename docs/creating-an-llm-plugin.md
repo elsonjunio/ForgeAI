@@ -11,7 +11,8 @@ Um plugin de LLM é um pacote Python comum que:
 2. expõe essa capability via um `Plugin`;
 3. é descoberto por entry point (ou passado explicitamente).
 
-O workflow usa o provider em três etapas: `planning`, `execution` e `review`.
+O provider é consumido por quem decidir chamar LLM — planners, capabilities ou a
+aplicação. O core não impõe etapas de uso.
 
 ## 1. O contrato `LLMProvider`
 
@@ -19,21 +20,39 @@ O workflow usa o provider em três etapas: `planning`, `execution` e `review`.
 from collections.abc import Sequence
 from typing import Any
 
-from core import LLMProvider, Message
+from core import LLMChunkCallback, LLMProvider, LLMResponse, Message
 
 class MeuProvider(LLMProvider):        # kind = "llm"
     @property
     def name(self) -> str:             # único dentro do kind
         ...
 
-    def complete(self, messages: Sequence[Message], **options: Any) -> Message:
+    def complete(
+        self,
+        messages: Sequence[Message],
+        *,
+        on_chunk: LLMChunkCallback | None = None,
+        **options: Any,
+    ) -> LLMResponse:
         ...
 ```
 
 - `name` — identificador estável do provider (ex.: `"openai"`, `"ollama"`).
-- `complete(messages, **options)` — recebe a conversa e devolve a resposta do
-  assistente. É **síncrono**; `**options` é passado adiante por convenção.
+- `complete(messages, *, on_chunk=None, **options)` — recebe a conversa e devolve
+  um `LLMResponse` **acumulado**. É **síncrono**; `**options` é passado adiante
+  por convenção.
+- `on_chunk` é **observacional**: se informado, o provider chama com `LLMChunk` a
+  cada pedaço recebido. O consumidor **não** reconstrói a resposta a partir dos
+  chunks — ele usa o `LLMResponse` retornado.
 - `default = True` (atributo de classe) marca o provider como default do kind.
+
+`LLMResponse` (retorno):
+
+| Campo | Tipo | Observação |
+|---|---|---|
+| `message` | `Message` | a mensagem do assistente (`.content` atalha para `message.content`). |
+| `usage` | `LLMUsage \| None` | tokens (prompt/completion/total), quando disponível. |
+| `metadata` | `dict` | dados do provider (modelo, finish reason, ...). |
 
 `Message` (contrato do core):
 
@@ -44,8 +63,8 @@ class MeuProvider(LLMProvider):        # kind = "llm"
 | `name` | `str \| None` | nome opcional do participante. |
 | `tool_call_id` | `str \| None` | para mensagens de papel `tool`. |
 
-> Não acople o provider aos prompts do workflow. Implemente um `complete`
-> genérico; o workflow decide o que enviar.
+> Não acople o provider a prompts específicos de um planner/capability. Implemente
+> um `complete` genérico; quem chama decide o que enviar.
 
 ## 2. Plugin mínimo
 
@@ -58,7 +77,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from core import Capability, LLMProvider, Message, Plugin, PluginContext
+from core import Capability, LLMProvider, LLMResponse, Message, Plugin, PluginContext
 
 
 class EchoLLM(LLMProvider):
@@ -71,9 +90,11 @@ class EchoLLM(LLMProvider):
     def name(self) -> str:
         return "echo"
 
-    def complete(self, messages: Sequence[Message], **options: Any) -> Message:
+    def complete(self, messages: Sequence[Message], **options: Any) -> LLMResponse:
         prompt = messages[-1].content if messages else ""
-        return Message(role="assistant", content=f"[{self._model}] {prompt[:200]}")
+        return LLMResponse(
+            message=Message(role="assistant", content=f"[{self._model}] {prompt[:200]}")
+        )
 
 
 class EchoLLMPlugin(Plugin):
@@ -88,10 +109,10 @@ class EchoLLMPlugin(Plugin):
         return [EchoLLM(self._model)]
 ```
 
-Com esse plugin registrado, o workflow passa a ter um provider de LLM. O `EchoLLM`
-é um stub determinístico: serve para comprovar a fiação (o workflow roda com ele),
-não para planejar de verdade. Um provider real apenas faz a completion; o workflow
-interpreta o texto devolvido.
+Com esse plugin registrado, o core passa a ter um provider de LLM. O `EchoLLM` é
+um stub determinístico: serve para comprovar a fiação, não para raciocinar de
+verdade. Um provider real apenas faz a completion; quem chama interpreta o texto
+devolvido.
 
 ## 3. Lendo configuração (settings)
 
@@ -193,12 +214,12 @@ automaticamente.
 ## 7. Verificando localmente
 
 ```python
-from core import build_core
+from core import LLMProvider, build_core
 
 core = build_core()                       # descobre por entry points
 try:
-    state = core.workflow.run(request="explique o módulo de pagamento")
-    print(state.status)
+    provider = core.registry.default_capability(LLMProvider)
+    print(provider.name if provider else "sem provider")
 finally:
     core.shutdown()
 ```
@@ -231,7 +252,7 @@ from typing import Any
 
 import httpx
 
-from core import LLMProvider, Message
+from core import LLMChunk, LLMChunkCallback, LLMProvider, LLMResponse, LLMUsage, Message
 
 
 class OpenAICompatibleLLM(LLMProvider):
@@ -257,7 +278,13 @@ class OpenAICompatibleLLM(LLMProvider):
     def close(self) -> None:
         self._client.close()
 
-    def complete(self, messages: Sequence[Message], **options: Any) -> Message:
+    def complete(
+        self,
+        messages: Sequence[Message],
+        *,
+        on_chunk: LLMChunkCallback | None = None,
+        **options: Any,
+    ) -> LLMResponse:
         payload: dict[str, Any] = {
             "model": self._model,
             "messages": [self._to_wire(m) for m in messages],
@@ -267,9 +294,21 @@ class OpenAICompatibleLLM(LLMProvider):
         response = self._client.post(
             f"{self._base_url}/chat/completions", json=payload, headers=headers
         )
-        response.raise_for_status()                 # erros viram exceção -> workflow.failed
-        content = response.json()["choices"][0]["message"]["content"]
-        return Message(role="assistant", content=content)
+        response.raise_for_status()                 # erros viram exceção observável
+        data = response.json()
+        content = data["choices"][0]["message"]["content"]
+        if on_chunk is not None:                    # chunk observacional (ex.: sem streaming real)
+            on_chunk(LLMChunk(content=content))
+        usage = data.get("usage") or {}
+        return LLMResponse(
+            message=Message(role="assistant", content=content),
+            usage=LLMUsage(
+                prompt_tokens=usage.get("prompt_tokens"),
+                completion_tokens=usage.get("completion_tokens"),
+                total_tokens=usage.get("total_tokens"),
+            ),
+            metadata={"model": data.get("model", self._model)},
+        )
 
     @staticmethod
     def _to_wire(message: Message) -> dict[str, Any]:
@@ -327,10 +366,10 @@ Configs típicas:
 
 ### Erros
 
-Se `complete` levantar qualquer exceção, o workflow emite
-`workflow.failed` e propaga o erro. Não é obrigatório herdar de `CoreError`;
-mas, se quiser um erro de domínio, herde de `CoreError` para que o entrypoint
-possa capturá-lo genericamente.
+Se `complete` levantar qualquer exceção, ela é observável na execução
+(`NodeResult.failed`/`ExecutionResult.error`). Não é obrigatório herdar de
+`CoreError`; mas, se quiser um erro de domínio, herde de `CoreError` para que o
+entrypoint possa capturá-lo genericamente.
 
 ## 9. Testando o plugin
 
@@ -346,8 +385,20 @@ from code_agent_plugin_meu_llm import EchoLLM
 def test_provider_returns_assistant_message() -> None:
     provider = EchoLLM()
     reply = provider.complete([Message(role="user", content="oi")])
-    assert reply.role == "assistant"
+    assert reply.message.role == "assistant"
     assert reply.content
+```
+
+Providers que suportam streaming emitem chunks pelo callback e ainda devolvem a
+resposta acumulada:
+
+```python
+def test_provider_streams_chunks() -> None:
+    chunks = []
+    reply = EchoLLM().complete(
+        [Message(role="user", content="oi")], on_chunk=chunks.append
+    )
+    assert reply.content  # resposta completa, independente dos chunks
 ```
 
 ```python
@@ -367,10 +418,10 @@ def test_plugin_registers_llm_capability() -> None:
 ```
 
 Dica: use um provider determinístico (como `EchoLLM`) para testar a fiação.
-Para exercitar o **workflow ponta a ponta** de forma estável, use um provider com
+Para exercitar planejamento/execução de forma estável, use um provider com
 respostas roteirizadas (um `ScriptedLLMProvider`, como em
-`packages/core/tests/support/workflow.py` do próprio core), em vez de depender do
-texto dos prompts internos. Guarde chamadas de rede para testes marcados como
+`packages/core/tests/support/capabilities.py` do próprio core), em vez de depender
+de texto específico de prompt. Guarde chamadas de rede para testes marcados como
 integração.
 
 ## 10. Checklist
@@ -384,7 +435,8 @@ integração.
 - [ ] Testes do provider (unit) e do plugin (integração).
 - [ ] Nenhum import de `langgraph`/`langchain_core` nem de módulos internos do core.
 
-Para entender a arquitetura e **outros tipos de plugin** (tools, validators,
-analyzers, discoverers, nós), veja [`creating-plugins.md`](creating-plugins.md) e o
-[`README.md`](../README.md). Para integrar o core em um entrypoint, veja
-[`using-the-core.md`](using-the-core.md).
+Para entender a arquitetura, fronteiras e limites atuais, veja
+[`architecture.md`](architecture.md) e **outros tipos de plugin** (tools,
+validators, analyzers, discoverers, nós) em
+[`creating-plugins.md`](creating-plugins.md). Para integrar o core em um
+entrypoint, veja [`using-the-core.md`](using-the-core.md).
