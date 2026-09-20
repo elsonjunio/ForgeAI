@@ -6,8 +6,8 @@ Este pacote não traz nenhuma capacidade concreta (LLM, filesystem, Git, shell,
 MCP); tudo é contribuído por plugins. Com **zero plugins instalados** o framework
 continua construído e executável.
 
-Ele faz parte de um monorepo. A documentação completa está no
-[README do repositório](../../README.md):
+Ele faz parte do monorepo **ForgeAI** (<https://github.com/elsonjunio/ForgeAI>). A
+documentação completa está no [README do repositório](../../README.md):
 
 - [Usando o core em um entrypoint](../../docs/using-the-core.md)
 - [Criando um plugin de LLM](../../docs/creating-an-llm-plugin.md)

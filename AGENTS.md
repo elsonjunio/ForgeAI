@@ -1,7 +1,8 @@
 # AGENTS.md
 
-`core-agent` is the provider-neutral core of an extensible Python framework for
-code agents. It ships no LLM provider, no concrete tool, and no
+`core-agent` is the provider-neutral core of the **ForgeAI** monorepo
+(`https://github.com/elsonjunio/ForgeAI`), an extensible Python framework for code
+agents. It ships no LLM provider, no concrete tool, and no
 filesystem/Git/shell integration — everything is contributed by plugins. With
 zero plugins installed the framework still builds and runs.
 

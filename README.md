@@ -1,11 +1,12 @@
-# core-agent
+# ForgeAI
 
-`core-agent` é o núcleo de um framework extensível para **Code Agents** em Python.
+**ForgeAI** é um monorepo para construir **Code Agents** extensíveis em Python. O
+núcleo é o pacote **`core-agent`**, que é **provedor-neutro**: não conhece nenhum
+LLM provider, não implementa filesystem/Git/shell/MCP e não contém nenhuma
+ferramenta concreta. Tudo isso é contribuído incrementalmente por *plugins*. Com
+**zero plugins instalados** o framework continua construído e executável.
 
-O núcleo é **provedor-neutro**: não conhece nenhum LLM provider, não implementa
-filesystem/Git/shell/MCP e não contém nenhuma ferramenta concreta. Tudo isso é
-contribuído incrementalmente por *plugins*. Com **zero plugins instalados** o
-framework continua construído e executável.
+Repositório: <https://github.com/elsonjunio/ForgeAI> · Licença: MIT.
 
 > Guia de integração em entrypoints (CLI, automação, jobs): [`docs/using-the-core.md`](docs/using-the-core.md).
 > Guia para criar um plugin de LLM: [`docs/creating-an-llm-plugin.md`](docs/creating-an-llm-plugin.md).

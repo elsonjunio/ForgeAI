@@ -4,12 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "core-agent"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Extensible core framework for building Code Agents in Python."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "Code Agent Contributors" }]
+authors = [{ name = "ForgeAI" }]
 keywords = ["agent", "code-agent", "langgraph", "langchain", "framework"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -33,7 +33,14 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/example/python-mini-agent"
+Homepage = "https://github.com/elsonjunio/ForgeAI"
+Repository = "https://github.com/elsonjunio/ForgeAI"
+Issues = "https://github.com/elsonjunio/ForgeAI/issues"
+
+[tool.hatch.version]
+# Single source of truth for the version.
+path = "src/core/version.py"
+pattern = "^VERSION = \"(?P<version>[^\"]+)\""
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/core"]
