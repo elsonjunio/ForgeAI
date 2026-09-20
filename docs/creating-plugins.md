@@ -368,5 +368,6 @@ em vez de depender de texto específico de prompt.
 - [ ] Entry point no grupo `core_agent.plugins`.
 - [ ] Nenhum import de `langgraph`/`langchain_core` nem de módulos internos do core.
 
-Veja também: [`using-the-core.md`](using-the-core.md) (integrar em um entrypoint) e
+Veja também: [`architecture.md`](architecture.md) (fronteiras e limites atuais),
+[`using-the-core.md`](using-the-core.md) (integrar em um entrypoint) e
 [`creating-an-llm-plugin.md`](creating-an-llm-plugin.md) (provider de LLM).

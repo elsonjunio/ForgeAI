@@ -104,15 +104,23 @@ Monorepo — every project is an independent Python package with its own
 - **Interaction.** `InteractionProvider` is host-provided (never a capability): it
   reaches plugins via `PluginContext.interaction` and executable capabilities via
   `NodeExecutionRequest.interaction`. `build_core(interaction=...)` wires it.
-- **Dynamic plan execution.** `PlanExecutor`/`GraphBuilder`
+- **Dynamic plan execution.** `PlanExecutor`/`NodeRunner`/`GraphBuilder`
   (`core/agent/graph.py`) turn an `ExecutionPlan` into a compiled LangGraph graph
-  and run it. Nodes resolve capabilities via `CapabilitySource.capability` and
-  execute through the `Executable` protocol (or the `Tool` adapter). The core has
+  and run it. `GraphBuilder` only does structural validation + wiring (it does
+  **not** execute or emit); `NodeRunner` resolves capabilities via
+  `CapabilitySource.capability`, executes through the `Executable` protocol (or
+  the `Tool` adapter), handles retry/control and emits node events;
+  `PlanExecutor` orchestrates build + invoke + finalize. The core has
   **no fixed pipeline** and **no ReAct loop**: the graph is whatever the plan
   says. Validation runs before building (`InvalidPlanError`,
   `MissingCapabilityError`, `UnsupportedCapabilityError`). No automatic history
   and no memory. `PAUSE`/`INTERRUPT` stop the run; persistent checkpointing is
   not implemented.
+- **Two runtimes.** `AgentRuntime` (`core/agent/runtime.py`) is the *generic node
+  runtime* (plugin-contributed `NodeContribution`s over `AgentState`).
+  `NodeRunner`/`PlanExecutor` (`core/agent/graph.py`) are the *plan runtime*
+  (`ExecutionPlan` -> LangGraph). Both know LangGraph; neither knows concrete
+  plugins.
 - **Graph wiring lives in `AgentRuntime`**: `START -> __core_init__ -> n1 -> ...
   -> nn -> END`. `__core_init__` is reserved; contributing a node with that id
   raises `InvalidGraphError`.
@@ -135,8 +143,16 @@ Monorepo — every project is an independent Python package with its own
   TOML/YAML.
 - Plugins absent from `CoreConfig.plugins` are **enabled by default**
   (`is_enabled`), so zero-configuration works.
+- **Current limits (do not assume they exist):** no persistent checkpoint
+  (`PAUSE`/`INTERRUPT` only stop the run), plans are DAGs (no cycles), the plan
+  execution state is a shared mutable object, `PlanExecutor.run` is sync (no
+  `arun`), the LLM contract has no tool-calls and there is no tool-calling loop,
+  no memory/RAG, and `CapabilityDescriptor.constraints` is descriptive only. The
+  canonical list is in `docs/architecture.md`.
 
 ## Docs
 
-`README.md` (Portuguese) covers layers, the public API, and a plugin example.
+`docs/architecture.md` is the canonical reference for responsibilities, layer
+boundaries and current limits — keep it in sync with behavior changes.
+`README.md` (Portuguese) covers layers, the public API and a plugin example.
 Trust the code when docs and config disagree.

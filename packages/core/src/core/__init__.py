@@ -3,7 +3,8 @@
 The public API is intentionally small and stable:
 
     - state:        AgentState, Message
-    - runtime:      AgentRuntime, PlanExecutor, GraphBuilder, build_core
+    - runtime:      AgentRuntime, PlanExecutor, NodeRunner, GraphBuilder,
+                    build_core
     - extension:    Plugin, PluginMetadata, PluginContext, PluginRegistry
     - discovery:    Discoverer, EntryPointDiscoverer, discover_plugins
     - capabilities: Capability, CapabilityDescriptor, LLMProvider, Tool,
@@ -21,7 +22,7 @@ contributed by plugins. With zero plugins the framework still builds and runs.
 
 from __future__ import annotations
 
-from core.agent.graph import GraphBuilder, PlanExecutor
+from core.agent.graph import GraphBuilder, NodeRunner, PlanExecutor
 from core.agent.runtime import AgentRuntime
 from core.agent.state import AgentState, AgentStatus, Message
 from core.config.loader import load_config
@@ -162,6 +163,7 @@ __all__ = [
     "NodeContribution",
     "NodeExecutionRequest",
     "NodeResult",
+    "NodeRunner",
     "PlanEdge",
     "PlanExecutor",
     "PlanNode",

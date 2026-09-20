@@ -366,8 +366,9 @@ core.executor.run(plan, context)         # plano -> ExecutionResult
 core.shutdown()                          # desativa plugins (ordem reversa)
 ```
 
-Para entender a arquitetura e como escrever um plugin externo, veja o
-[`README.md`](../README.md). Para um provider de LLM, veja
+Para entender a arquitetura, fronteiras e limites atuais, veja
+[`architecture.md`](architecture.md). Para um provider de LLM, veja
 [`creating-an-llm-plugin.md`](creating-an-llm-plugin.md); para tools, validators,
 analyzers, discoverers, planners e nós, veja
-[`creating-plugins.md`](creating-plugins.md).
+[`creating-plugins.md`](creating-plugins.md). Visão geral no
+[`README.md`](../README.md).

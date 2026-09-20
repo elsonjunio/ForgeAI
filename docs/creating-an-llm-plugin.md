@@ -435,7 +435,8 @@ integração.
 - [ ] Testes do provider (unit) e do plugin (integração).
 - [ ] Nenhum import de `langgraph`/`langchain_core` nem de módulos internos do core.
 
-Para entender a arquitetura e **outros tipos de plugin** (tools, validators,
-analyzers, discoverers, nós), veja [`creating-plugins.md`](creating-plugins.md) e o
-[`README.md`](../README.md). Para integrar o core em um entrypoint, veja
-[`using-the-core.md`](using-the-core.md).
+Para entender a arquitetura, fronteiras e limites atuais, veja
+[`architecture.md`](architecture.md) e **outros tipos de plugin** (tools,
+validators, analyzers, discoverers, nós) em
+[`creating-plugins.md`](creating-plugins.md). Para integrar o core em um
+entrypoint, veja [`using-the-core.md`](using-the-core.md).

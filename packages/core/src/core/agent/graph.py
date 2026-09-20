@@ -2,20 +2,26 @@
 
 This module belongs to the LangGraph execution layer (alongside
 ``core.agent.runtime``) and is one of the only two modules allowed to import
-LangGraph. The plan and the execution contracts never depend on LangGraph; only
-this module does.
+LangGraph. The plan and the execution contracts never depend on LangGraph.
+
+Responsibilities are deliberately split:
+
+* :class:`NodeRunner` — *runtime*: resolves a node's capability, adapts
+  ``Executable``/``Tool``, handles retry/control callbacks and emits node-level
+  events. It executes; it does not build graphs.
+* :class:`GraphBuilder` — converts an ``ExecutionPlan`` into a compiled LangGraph
+  graph: structural validation + wiring only. It does **not** resolve/execute
+  capabilities, handle control or emit events.
+* :class:`PlanExecutor` — *runtime*: orchestrates build + invoke + finalize and
+  emits execution-level events.
 
 Pipeline::
 
     ExecutionPlan --(GraphBuilder)--> compiled LangGraph --(PlanExecutor)--> ExecutionResult
 
-Plan nodes are resolved through the capability registry and executed via the
-:class:`~core.contracts.execution.Executable` protocol, or via the ``Tool``
-contract adapter. The core contains no concrete capability.
-
 Limitations (documented, not faked): there is no persistent checkpoint. A
-``PAUSE`` or ``INTERRUPT`` request stops the current run; resuming/streaming is
-left for a future checkpointing mechanism.
+``PAUSE`` or ``INTERRUPT`` request stops the current run; resuming is left for a
+future checkpointing mechanism.
 """
 
 from __future__ import annotations
@@ -76,8 +82,8 @@ def _merge_execution(left: _PlanExecution, right: _PlanExecution) -> _PlanExecut
 
     ``_PlanExecution`` is a single mutable object shared by every node (results
     and context are updated in place), so any of the concurrent updates refers to
-    the same object; keeping ``left`` is enough and avoids LangGraph's
-    "one value per step" error.
+    the same object; keeping ``left`` avoids LangGraph's "one value per step"
+    error.
     """
     return left
 
@@ -98,17 +104,20 @@ class _ExecutionStopped(Exception):
         self.failed = failed
 
 
-class GraphBuilder:
-    """Transforms an :class:`ExecutionPlan` into a compiled LangGraph graph.
+class NodeRunner:
+    """Runtime that resolves and executes a single plan node.
+
+    Owns capability resolution, the ``Executable``/``Tool`` adapters, retry and
+    control callbacks, and node-level events. It does not know about graph
+    construction.
 
     Args:
         registry: capability source used to resolve plan nodes.
-        observer: optional observer for lifecycle events.
+        observer: optional observer for node/capability events.
         control: optional callback invoked after each node completes; it may
             request ``CONTINUE``, ``PAUSE``, ``INTERRUPT`` or ``RETRY``.
-        max_node_retries: how many times a node may be retried when a control
-            callback requests ``RETRY`` (``0`` means no retry).
-        recursion_limit: LangGraph recursion budget for the compiled graph.
+        max_node_retries: how many times a node may be retried on ``RETRY``.
+        interaction: optional host-provided interaction mechanism.
     """
 
     def __init__(
@@ -118,7 +127,6 @@ class GraphBuilder:
         observer: ExecutionObserver | None = None,
         control: ControlCallback | None = None,
         max_node_retries: int = 0,
-        recursion_limit: int = _DEFAULT_RECURSION_LIMIT,
         interaction: InteractionProvider | None = None,
     ) -> None:
         if max_node_retries < 0:
@@ -127,89 +135,10 @@ class GraphBuilder:
         self._observer = observer
         self._control = control
         self._max_node_retries = max_node_retries
-        self._recursion_limit = recursion_limit
         self._interaction = interaction
 
-    @property
-    def recursion_limit(self) -> int:
-        """LangGraph recursion budget used when invoking the compiled graph."""
-        return self._recursion_limit
-
-    def validate(self, plan: ExecutionPlan) -> None:
-        """Validate the plan structure and referenced capabilities.
-
-        Raises:
-            InvalidPlanError: duplicate/reserved ids, dangling edges, self-loops
-                or a node without a capability.
-            MissingCapabilityError: a node references an unknown capability.
-        """
-        seen: set[str] = set()
-        for node in plan.nodes:
-            if node.id in seen:
-                raise InvalidPlanError(
-                    f"duplicate node id in plan {plan.id!r}: {node.id!r}"
-                )
-            if node.id in _RESERVED_NODE_IDS:
-                raise InvalidPlanError(f"node id {node.id!r} is reserved")
-            seen.add(node.id)
-
-        node_ids = {node.id for node in plan.nodes}
-        for edge in plan.edges:
-            if edge.source not in node_ids:
-                raise InvalidPlanError(
-                    f"plan {plan.id!r} edge references unknown source node {edge.source!r}"
-                )
-            if edge.target not in node_ids:
-                raise InvalidPlanError(
-                    f"plan {plan.id!r} edge references unknown target node {edge.target!r}"
-                )
-            if edge.source == edge.target:
-                raise InvalidPlanError(
-                    f"plan {plan.id!r} has a self-loop on node {edge.source!r}"
-                )
-
-        for node in plan.nodes:
-            capability = self._resolve_node(node)
-            if not isinstance(capability, Executable) and not isinstance(capability, Tool):
-                raise UnsupportedCapabilityError(
-                    f"capability {node.capability!r} on node {node.id!r} "
-                    "cannot run as a plan node"
-                )
-
-    def build(self, plan: ExecutionPlan) -> Any:
-        """Validate ``plan`` and return a compiled LangGraph graph.
-
-        Raises:
-            InvalidPlanError / MissingCapabilityError: invalid plan.
-            GraphBuildError: if compilation fails.
-        """
-        self.validate(plan)
-        try:
-            graph: StateGraph[_GraphState] = StateGraph(_GraphState)
-            for node in plan.nodes:
-                graph.add_node(node.id, cast(Any, self._node_function(node)))
-
-            roots = [node.id for node in plan.nodes if not _has_incoming(plan, node.id)]
-            leaves = [node.id for node in plan.nodes if not _has_outgoing(plan, node.id)]
-            for root in roots:
-                graph.add_edge(START, root)
-            for edge in plan.edges:
-                graph.add_edge(edge.source, edge.target)
-            for leaf in leaves:
-                graph.add_edge(leaf, END)
-            if not plan.nodes:
-                graph.add_edge(START, END)
-            return graph.compile()
-        except (InvalidPlanError, MissingCapabilityError, UnsupportedCapabilityError):
-            raise
-        except Exception as exc:
-            raise GraphBuildError(
-                f"failed to build graph for plan {plan.id!r}: {type(exc).__name__}: {exc}"
-            ) from exc
-
-    # -- internals -----------------------------------------------------------
-
-    def _resolve(self, capability_id: str, node_id: str) -> Capability:
+    def resolve(self, capability_id: str, node_id: str) -> Capability:
+        """Resolve ``capability_id`` (``"<kind>:<name>"``) via the registry."""
         kind, separator, name = capability_id.partition(":")
         if not separator or not name:
             raise InvalidPlanError(
@@ -224,63 +153,89 @@ class GraphBuilder:
             )
         return capability
 
-    def _resolve_node(self, node: PlanNode) -> Capability:
+    def resolve_node(self, node: PlanNode) -> Capability:
+        """Resolve the capability referenced by ``node``."""
         capability_id = node.capability
         if not capability_id:
             raise InvalidPlanError(f"node {node.id!r} has no capability")
-        return self._resolve(capability_id, node.id)
+        return self.resolve(capability_id, node.id)
 
-    def _node_function(self, node: PlanNode) -> Any:
-        node_id = node.id
+    def validate_node(self, node: PlanNode) -> None:
+        """Ensure ``node`` references a registered, executable capability."""
+        capability = self.resolve_node(node)
+        if not isinstance(capability, Executable) and not isinstance(capability, Tool):
+            raise UnsupportedCapabilityError(
+                f"capability {node.capability!r} on node {node.id!r} "
+                "cannot run as a plan node"
+            )
 
-        def run(state: _GraphState) -> dict[str, Any]:
-            execution = state["execution"]
-            capability = self._resolve_node(node)
-            self._emit(ExecutionEventKind.NODE_START, node=node)
-            attempts = 0
-            while True:
-                self._emit(ExecutionEventKind.CAPABILITY_START, node=node)
-                result = self._invoke(capability, node, execution)
-                self._emit(
-                    ExecutionEventKind.CAPABILITY_COMPLETE, node=node, result=result
-                )
-                control = self._after_node(execution.context, result)
-                if (
-                    control is not None
-                    and control.action is ControlAction.RETRY
-                    and attempts < self._max_node_retries
-                ):
-                    attempts += 1
-                    continue
-                break
+    def execute(self, node: PlanNode, execution: _PlanExecution) -> NodeResult:
+        """Execute ``node``, applying retry/control and emitting events.
 
-            execution.results[node_id] = result
-            if result.success:
-                self._emit(ExecutionEventKind.NODE_COMPLETE, node=node, result=result)
-            else:
-                self._emit(
-                    ExecutionEventKind.ERROR,
-                    node=node,
-                    result=result,
-                    error=result.error,
-                )
-                self._emit(ExecutionEventKind.NODE_COMPLETE, node=node, result=result)
-                raise _ExecutionStopped(
-                    ExecutionControl(
-                        ControlAction.INTERRUPT,
-                        reason=result.error or f"node {node_id!r} failed",
-                    ),
-                    execution,
-                    failed=True,
-                )
-            if control is not None and control.action in (
-                ControlAction.PAUSE,
-                ControlAction.INTERRUPT,
+        Raises:
+            _ExecutionStopped: on node failure or when a control callback asks to
+                pause/interrupt.
+        """
+        capability = self.resolve_node(node)
+        self.emit(ExecutionEventKind.NODE_START, node=node)
+        attempts = 0
+        while True:
+            self.emit(ExecutionEventKind.CAPABILITY_START, node=node)
+            result = self._invoke(capability, node, execution)
+            self.emit(ExecutionEventKind.CAPABILITY_COMPLETE, node=node, result=result)
+            control = self._after_node(execution.context, result)
+            if (
+                control is not None
+                and control.action is ControlAction.RETRY
+                and attempts < self._max_node_retries
             ):
-                raise _ExecutionStopped(control, execution, failed=False)
-            return {"execution": execution}
+                attempts += 1
+                continue
+            break
 
-        return run
+        execution.results[node.id] = result
+        if result.success:
+            self.emit(ExecutionEventKind.NODE_COMPLETE, node=node, result=result)
+        else:
+            self.emit(
+                ExecutionEventKind.ERROR, node=node, result=result, error=result.error
+            )
+            self.emit(ExecutionEventKind.NODE_COMPLETE, node=node, result=result)
+            raise _ExecutionStopped(
+                ExecutionControl(
+                    ControlAction.INTERRUPT,
+                    reason=result.error or f"node {node.id!r} failed",
+                ),
+                execution,
+                failed=True,
+            )
+        if control is not None and control.action in (
+            ControlAction.PAUSE,
+            ControlAction.INTERRUPT,
+        ):
+            raise _ExecutionStopped(control, execution, failed=False)
+        return result
+
+    def emit(
+        self,
+        kind: ExecutionEventKind,
+        *,
+        node: PlanNode | None = None,
+        result: NodeResult | None = None,
+        error: str | None = None,
+    ) -> None:
+        """Emit a node-level event to the observer, if any."""
+        if self._observer is None:
+            return
+        self._observer.on_event(
+            ExecutionEvent(
+                kind=kind,
+                node_id=node.id if node is not None else None,
+                capability=node.capability if node is not None else None,
+                error=error,
+                data={"success": result.success} if result is not None else {},
+            )
+        )
 
     def _invoke(
         self, capability: Capability, node: PlanNode, execution: _PlanExecution
@@ -320,25 +275,112 @@ class GraphBuilder:
             return None
         return self._control.on_node_complete(context, result)
 
-    def _emit(
+
+class GraphBuilder:
+    """Converts an :class:`ExecutionPlan` into a compiled LangGraph graph.
+
+    Structural validation and wiring only: it does not resolve/execute
+    capabilities, handle control or emit events (that belongs to
+    :class:`NodeRunner`/:class:`PlanExecutor`).
+
+    Args:
+        runner: runtime used to validate that referenced capabilities exist and
+            are executable, and to execute nodes once the graph runs.
+        recursion_limit: LangGraph recursion budget for the compiled graph.
+    """
+
+    def __init__(
         self,
-        kind: ExecutionEventKind,
         *,
-        node: PlanNode,
-        result: NodeResult | None = None,
-        error: str | None = None,
+        runner: NodeRunner,
+        recursion_limit: int = _DEFAULT_RECURSION_LIMIT,
     ) -> None:
-        if self._observer is None:
-            return
-        self._observer.on_event(
-            ExecutionEvent(
-                kind=kind,
-                node_id=node.id,
-                capability=node.capability,
-                error=error,
-                data={"success": result.success} if result is not None else {},
-            )
-        )
+        self._runner = runner
+        self._recursion_limit = recursion_limit
+
+    @property
+    def recursion_limit(self) -> int:
+        """LangGraph recursion budget used when invoking the compiled graph."""
+        return self._recursion_limit
+
+    def validate(self, plan: ExecutionPlan) -> None:
+        """Validate the plan structure and referenced capabilities.
+
+        Raises:
+            InvalidPlanError: duplicate/reserved ids, dangling edges, self-loops
+                or a node without a capability.
+            MissingCapabilityError: a node references an unknown capability.
+            UnsupportedCapabilityError: a referenced capability cannot run.
+        """
+        seen: set[str] = set()
+        for node in plan.nodes:
+            if node.id in seen:
+                raise InvalidPlanError(
+                    f"duplicate node id in plan {plan.id!r}: {node.id!r}"
+                )
+            if node.id in _RESERVED_NODE_IDS:
+                raise InvalidPlanError(f"node id {node.id!r} is reserved")
+            seen.add(node.id)
+
+        node_ids = {node.id for node in plan.nodes}
+        for edge in plan.edges:
+            if edge.source not in node_ids:
+                raise InvalidPlanError(
+                    f"plan {plan.id!r} edge references unknown source node {edge.source!r}"
+                )
+            if edge.target not in node_ids:
+                raise InvalidPlanError(
+                    f"plan {plan.id!r} edge references unknown target node {edge.target!r}"
+                )
+            if edge.source == edge.target:
+                raise InvalidPlanError(
+                    f"plan {plan.id!r} has a self-loop on node {edge.source!r}"
+                )
+
+        for node in plan.nodes:
+            self._runner.validate_node(node)
+
+    def build(self, plan: ExecutionPlan) -> Any:
+        """Validate ``plan`` and return a compiled LangGraph graph.
+
+        Raises:
+            InvalidPlanError / MissingCapabilityError / UnsupportedCapabilityError:
+                invalid plan.
+            GraphBuildError: if compilation fails.
+        """
+        self.validate(plan)
+        try:
+            graph: StateGraph[_GraphState] = StateGraph(_GraphState)
+            for node in plan.nodes:
+                graph.add_node(node.id, cast(Any, self._node_function(node)))
+
+            roots = [node.id for node in plan.nodes if not _has_incoming(plan, node.id)]
+            leaves = [node.id for node in plan.nodes if not _has_outgoing(plan, node.id)]
+            for root in roots:
+                graph.add_edge(START, root)
+            for edge in plan.edges:
+                graph.add_edge(edge.source, edge.target)
+            for leaf in leaves:
+                graph.add_edge(leaf, END)
+            if not plan.nodes:
+                graph.add_edge(START, END)
+            return graph.compile()
+        except (InvalidPlanError, MissingCapabilityError, UnsupportedCapabilityError):
+            raise
+        except Exception as exc:
+            raise GraphBuildError(
+                f"failed to build graph for plan {plan.id!r}: {type(exc).__name__}: {exc}"
+            ) from exc
+
+    def _node_function(self, node: PlanNode) -> Any:
+        """Build the graph node callable; execution is delegated to the runner."""
+
+        def run(state: _GraphState) -> dict[str, Any]:
+            execution = state["execution"]
+            self._runner.execute(node, execution)
+            return {"execution": execution}
+
+        return run
 
 
 def _has_incoming(plan: ExecutionPlan, node_id: str) -> bool:
@@ -350,7 +392,10 @@ def _has_outgoing(plan: ExecutionPlan, node_id: str) -> bool:
 
 
 class PlanExecutor:
-    """Builds and runs the dynamic graph of a plan.
+    """Runtime that builds and runs the dynamic graph of a plan.
+
+    Owns a :class:`NodeRunner` (node execution) and a :class:`GraphBuilder`
+    (plan -> graph), and emits execution-level events.
 
     Args:
         registry: capability source used to resolve plan nodes.
@@ -358,6 +403,7 @@ class PlanExecutor:
         control: optional callback invoked after each node completes.
         max_node_retries: retries allowed per node on ``RETRY`` requests.
         recursion_limit: LangGraph recursion budget.
+        interaction: optional host-provided interaction mechanism.
     """
 
     def __init__(
@@ -371,19 +417,26 @@ class PlanExecutor:
         interaction: InteractionProvider | None = None,
     ) -> None:
         self._observer = observer
-        self._builder = GraphBuilder(
+        self._runner = NodeRunner(
             registry=registry,
             observer=observer,
             control=control,
             max_node_retries=max_node_retries,
-            recursion_limit=recursion_limit,
             interaction=interaction,
+        )
+        self._builder = GraphBuilder(
+            runner=self._runner, recursion_limit=recursion_limit
         )
 
     @property
     def builder(self) -> GraphBuilder:
         """The underlying :class:`GraphBuilder`."""
         return self._builder
+
+    @property
+    def runner(self) -> NodeRunner:
+        """The underlying :class:`NodeRunner`."""
+        return self._runner
 
     def validate(self, plan: ExecutionPlan) -> None:
         """Validate ``plan`` without building the graph."""
@@ -397,9 +450,10 @@ class PlanExecutor:
         """Execute ``plan`` and return its outcome.
 
         Raises:
-            InvalidPlanError / MissingCapabilityError / GraphBuildError: the plan
-                cannot be executed. Errors raised *by a capability* while a node
-                runs are captured in the returned :class:`ExecutionResult`.
+            InvalidPlanError / MissingCapabilityError / UnsupportedCapabilityError /
+            GraphBuildError: the plan cannot be executed. Errors raised *by a
+            capability* while a node runs are captured in the returned
+            :class:`ExecutionResult`.
         """
         self._emit(ExecutionEventKind.EXECUTION_START, plan=plan)
         execution = _PlanExecution(context=context)

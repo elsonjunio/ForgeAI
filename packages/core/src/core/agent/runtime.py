@@ -1,11 +1,15 @@
-"""Generic agent runtime: the graph built from plugin-contributed nodes.
+"""Generic node runtime: the graph built from plugin-contributed nodes.
 
 This module and :mod:`core.agent.graph` are the only two modules allowed to
-import LangGraph/LangChain. ``AgentRuntime`` owns construction and compilation of
-the execution graph built from :class:`NodeContribution`s; the rest of the
-framework — plugins, contracts, events — works with plain :class:`AgentState`
-objects and never touches ``StateGraph`` directly. To replace the execution
-engine later, only the execution modules need to change.
+import LangGraph/LangChain. This one hosts the **generic node runtime**
+(:class:`AgentRuntime`), which executes a linear graph of
+:class:`NodeContribution`s over :class:`AgentState`. The **plan runtime**
+(``PlanExecutor``/``NodeRunner``/``GraphBuilder``) lives in
+:mod:`core.agent.graph` and executes dynamic ``ExecutionPlan``s.
+
+The rest of the framework — plugins, contracts, events — works with plain
+:class:`AgentState` objects and never touches ``StateGraph`` directly. To replace
+the execution engine later, only the execution modules need to change.
 """
 
 from __future__ import annotations

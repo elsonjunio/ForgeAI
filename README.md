@@ -11,6 +11,7 @@ Repositório: <https://github.com/elsonjunio/ForgeAI> · Licença: MIT.
 > Guia de integração em entrypoints (CLI, automação, jobs): [`docs/using-the-core.md`](docs/using-the-core.md).
 > Guia para criar um plugin de LLM: [`docs/creating-an-llm-plugin.md`](docs/creating-an-llm-plugin.md).
 > Guia para criar os demais plugins (tools, validators, analyzers, discoverers, nós): [`docs/creating-plugins.md`](docs/creating-plugins.md).
+> **Arquitetura, fronteiras de responsabilidade e limites atuais:** [`docs/architecture.md`](docs/architecture.md).
 
 ## Monorepo
 
@@ -70,14 +71,15 @@ implementação dela. Qualquer pacote externo que forneça `LLMProvider`, `Tool`
 | Camada | Pacotes | Responsabilidade |
 |---|---|---|
 | **Domínio** | `core.contracts`, `core.agent.state`, `core.events.event`, `core.config.schema` | Modelos puros e contratos (Pydantic), sem I/O e sem LangGraph. |
-| **Runtime** | `core.agent.runtime`, `core.agent.graph`, `core.plugins`, `core.events.bus` | Orquestração. `AgentRuntime`/`GraphBuilder`/`PlanExecutor` encapsulam LangGraph; `PluginRegistry` administra ciclo de vida, capabilities e grupos. |
+| **Runtime** | `core.agent.runtime`, `core.agent.graph`, `core.plugins`, `core.events.bus` | Orquestração. `AgentRuntime` (nós) e `NodeRunner`/`GraphBuilder`/`PlanExecutor` (planos) encapsulam LangGraph; `PluginRegistry` administra ciclo de vida, capabilities e grupos. |
 | **Infraestrutura** | `core.config.loader`, `core.runtime` | Carregamento de configuração (dict/JSON) e composition root (`build_core`). |
 
 ### Estrutura
 
 ```
 packages/core/src/core/
-  agent/        AgentState, Message, AgentRuntime; GraphBuilder, PlanExecutor
+  agent/        AgentState, Message, AgentRuntime (generic node runtime);
+                NodeRunner, GraphBuilder, PlanExecutor (plan runtime)
                 (runtime.py e graph.py são as únicas importações de LangGraph)
   contracts/    Capability, CapabilityDescriptor, CapabilitySource, Group,
                 LLMProvider, Tool, CodeAnalyzer, Validator, Discoverer, Planner,
@@ -142,10 +144,11 @@ packages/core/tests/    testes (inclui tests/integration com plugin externo)
    registra e agrupa; a composição é do host/plugin. Ver *Grupos, planners e
    escopos*.
 
-10. **Execução dinâmica** — `GraphBuilder`/`PlanExecutor` transformam um
-    `ExecutionPlan` (produzido por um `Planner` plugin) em um grafo LangGraph
-    executável, resolvendo capabilities pelo registry. Sem pipeline fixa e sem
-    ReAct loop no core. Ver *Execução dinâmica*.
+10. **Execução dinâmica** — `GraphBuilder` converte um `ExecutionPlan`
+    (produzido por um `Planner` plugin) em um grafo LangGraph; `NodeRunner`
+    resolve/executa cada node (adaptando `Executable`/`Tool`) e `PlanExecutor`
+    orquestra build+execução. Sem pipeline fixa e sem ReAct loop no core. Ver
+    *Execução dinâmica*.
 
 ## Uso mínimo (zero plugins)
 
@@ -357,6 +360,11 @@ Request → Planner (plugin) → ExecutionPlan → GraphBuilder → LangGraph �
 - `Planner` (capability `kind="planner"`) produz um `ExecutionPlan` e **não
   conhece LangGraph**.
 - `container.executor` (um `PlanExecutor`) valida o plano, monta o grafo e executa.
+- **Separação de responsabilidades**: `GraphBuilder` só converte plano → grafo
+  (validação estrutural + wiring; **não** executa nem emite eventos);
+  `NodeRunner` resolve a capability e executa o node (adaptadores
+  `Executable`/`Tool`, retry, controle e eventos de node); `PlanExecutor`
+  orquestra build + execução e emite os eventos de execução.
 - Cada `PlanNode` referencia uma capability por id `"<kind>:<name>"`, resolvida
   pelo registry. A execução usa o protocolo `Executable`
   (`execute(request) -> NodeResult`) ou o adaptador de `Tool` (`invoke`).
@@ -458,6 +466,32 @@ somente a API pública) e é exercitado por
 `packages/core/tests/integration/test_external_plugin.py`, inclusive via
 descoberta por entry point.
 
+## Limites atuais
+
+O core é um **kernel**, não um agente pronto. Hoje:
+
+- **Sem checkpoint persistente** — `PAUSE`/`INTERRUPT` apenas encerram a execução
+  (`status="stopped"`); não há resume/replay.
+- **Planos são DAGs** — sem ciclos/iteração no core; um plano iterativo precisa
+  ser desenrolado pelo planner.
+- **Paralelismo** é expressável por arestas, mas o estado de execução é mutável e
+  compartilhado (não serializável/thread-safe).
+- **Falha de node interrompe o grafo**; nodes já concluídos permanecem.
+- **LLM síncrono** — sem `acomplete`; `PlanExecutor` só tem `run` (sem `arun`);
+  `on_chunk` é observacional e não alimenta o runtime.
+- **Sem function/tool calling** no contrato (`Message` não tem `tool_calls`) e
+  **sem loop de tool-calling** no core.
+- **Sem memória/RAG** — o histórico é fornecido pelo host
+  (`ExecutionContext.history`); o core nunca o busca.
+- **Sem política de segurança/sandbox** — `constraints` é descritivo, não
+  aplicado.
+- **InteractionProvider é opcional** — ausente, é `None`.
+- **Sem multi-agente/handoff**, tracing, tokens/custo.
+- **Configuração JSON** apenas; modelos com `extra="forbid"`.
+
+A lista completa e as garantias de fronteira estão em
+[`docs/architecture.md`](docs/architecture.md).
+
 ## Desenvolvimento
 
 A partir da raiz do repositório:
@@ -488,8 +522,11 @@ workflow de CI (`ci.yml`) roda lint, type checking e testes em Python 3.10–3.1
 
 ## Escopo atual vs. próximo passo
 
-Este pacote é a **fundação**: contratos, ciclo de vida, eventos, configuração e
-o runtime encapsulando LangGraph. O *fluxo completo* do Code Agent (loop de
-agente com LLM, seleção/execução de ferramentas, memória, etc.) **não está
-implementado**; ele será construído sobre estes contratos, contribuído por
-plugins e orquestrado pelo `AgentRuntime` — sem expor LangGraph aos plugins.
+Este repositório é o **kernel**: contratos, registry, ciclo de vida, grupos,
+planners, configuração e os runtimes que encapsulam LangGraph (generic node
+runtime e plan runtime). O **agente completo** (loop de tool-calling, memória,
+segurança/sandbox, checkpoint) **não está implementado**; ele deve ser construído
+como **plugins** sobre estes contratos, sem expor LangGraph aos plugins.
+
+As fronteiras de responsabilidade e os limites atuais estão detalhados em
+[`docs/architecture.md`](docs/architecture.md).
