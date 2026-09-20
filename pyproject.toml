@@ -12,23 +12,54 @@
 [tool.ruff]
 line-length = 100
 target-version = "py310"
-src = ["packages/core/src", "packages/core/tests"]
+src = [
+    "packages/core/src",
+    "packages/core/tests",
+    "packages/plugins/code-agent-plugin-opencode-go/src",
+    "packages/plugins/code-agent-plugin-opencode-go/tests",
+    "apps/cli/src",
+    "apps/cli/tests",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "C4", "SIM"]
 
 [tool.mypy]
 python_version = "3.10"
-files = ["packages/core/src", "packages/core/tests"]
+files = [
+    "packages/core/src",
+    "packages/core/tests",
+    "packages/plugins/code-agent-plugin-opencode-go/src",
+    "packages/plugins/code-agent-plugin-opencode-go/tests",
+    "apps/cli/src",
+    "apps/cli/tests",
+]
 strict = true
 plugins = ["pydantic.mypy"]
-mypy_path = ["packages/core/src", "packages/core"]
+mypy_path = [
+    "packages/core/src",
+    "packages/core",
+    "packages/plugins/code-agent-plugin-opencode-go/src",
+    "apps/cli/src",
+]
 exclude = ["packages/core/tests/support"]
 
 [tool.pytest.ini_options]
-testpaths = ["packages/core/tests"]
+testpaths = [
+    "packages/core/tests",
+    "packages/plugins/code-agent-plugin-opencode-go/tests",
+    "apps/cli/tests",
+]
 addopts = "-q"
-pythonpath = ["packages/core/src"]
+pythonpath = [
+    "packages/core/src",
+    "packages/plugins/code-agent-plugin-opencode-go/src",
+    "apps/cli/src",
+]
 
 [tool.coverage.run]
-source = ["packages/core/src/core"]
+source = [
+    "packages/core/src/core",
+    "packages/plugins/code-agent-plugin-opencode-go/src/code_agent_plugin_opencode_go",
+    "apps/cli/src/forge_cli",
+]

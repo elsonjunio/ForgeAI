@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from typing import Any
 
 from core.config.schema import CoreConfig
@@ -122,7 +122,7 @@ class PluginRegistry:
     def __contains__(self, plugin_id: object) -> bool:
         return plugin_id in self._plugins
 
-    def __iter__(self) -> Iterable[Plugin]:
+    def __iter__(self) -> Iterator[Plugin]:
         return iter(self._plugins.values())
 
     def __len__(self) -> int:

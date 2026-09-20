@@ -1439,12 +1439,13 @@ há agregação/política de custos implementada pelo Core.
 
 ## 34.13 CLI
 
-Não existe CLI implementada no repositório.
+Existe um CLI inicial (`apps/cli/`, distribuição `forgeai-cli`, comando
+`forgeai`) que hoje serve para **chat** e para **inspeção de plugins**
+(`/plugins`, `/capabilities`, `/groups`, `/planners`, `/providers`, `/config`).
 
-`apps/cli/` ainda é placeholder.
-
-A documentação pode demonstrar integração a partir de uma aplicação/entrypoint,
-mas isso não significa que uma CLI oficial já exista.
+O chat usa apenas `LLMProvider.complete`; **não** passa por
+planner/`PlanExecutor` ainda (`/plan` é placeholder até existir um `Planner`). O
+CLI é host, não core.
 
 ---
 
@@ -1661,11 +1662,15 @@ packages/
 
 packages/
 └── plugins/
-    └── README.md      (placeholder; nenhum plugin concreto)
+    ├── README.md
+    └── code-agent-plugin-opencode-go/
+        ├── src/code_agent_plugin_opencode_go/
+        └── tests/
 
 apps/
 └── cli/
-    └── README.md      (placeholder; CLI ainda não implementada)
+    ├── src/forge_cli/
+    └── tests/
 
 docs/
 ├── architecture.md
@@ -1689,7 +1694,7 @@ scripts/build_packages.py
 
 O Core atualmente possui:
 
-* 152 testes unitários e de integração;
+* 170 testes unitários e de integração;
 * `ruff check .` limpo;
 * `mypy --strict` aplicado;
 * CI para Python 3.10–3.12;
@@ -1757,8 +1762,10 @@ mudanças de API e avaliadas com cuidado.
 As seguintes funcionalidades são extensões futuras e **não fazem parte do
 Core atual**:
 
-1. plugin de exemplo real contendo planner e tool;
-2. CLI;
+1. plugin de planner + tool de exemplo (já existe um plugin de **LLM**:
+   `packages/plugins/code-agent-plugin-opencode-go`);
+2. execução via planner/`PlanExecutor` no CLI (o chat já existe em
+   `apps/cli`);
 3. tool calling;
 4. loop de tool-calling;
 5. sandbox;
