@@ -11,7 +11,8 @@ Um plugin de LLM é um pacote Python comum que:
 2. expõe essa capability via um `Plugin`;
 3. é descoberto por entry point (ou passado explicitamente).
 
-O workflow usa o provider em três etapas: `planning`, `execution` e `review`.
+O provider é consumido por quem decidir chamar LLM — planners, capabilities ou a
+aplicação. O core não impõe etapas de uso.
 
 ## 1. O contrato `LLMProvider`
 
@@ -62,8 +63,8 @@ class MeuProvider(LLMProvider):        # kind = "llm"
 | `name` | `str \| None` | nome opcional do participante. |
 | `tool_call_id` | `str \| None` | para mensagens de papel `tool`. |
 
-> Não acople o provider aos prompts do workflow. Implemente um `complete`
-> genérico; o workflow decide o que enviar.
+> Não acople o provider a prompts específicos de um planner/capability. Implemente
+> um `complete` genérico; quem chama decide o que enviar.
 
 ## 2. Plugin mínimo
 
@@ -108,10 +109,10 @@ class EchoLLMPlugin(Plugin):
         return [EchoLLM(self._model)]
 ```
 
-Com esse plugin registrado, o workflow passa a ter um provider de LLM. O `EchoLLM`
-é um stub determinístico: serve para comprovar a fiação (o workflow roda com ele),
-não para planejar de verdade. Um provider real apenas faz a completion; o workflow
-interpreta o texto devolvido.
+Com esse plugin registrado, o core passa a ter um provider de LLM. O `EchoLLM` é
+um stub determinístico: serve para comprovar a fiação, não para raciocinar de
+verdade. Um provider real apenas faz a completion; quem chama interpreta o texto
+devolvido.
 
 ## 3. Lendo configuração (settings)
 
@@ -213,12 +214,12 @@ automaticamente.
 ## 7. Verificando localmente
 
 ```python
-from core import build_core
+from core import LLMProvider, build_core
 
 core = build_core()                       # descobre por entry points
 try:
-    state = core.workflow.run(request="explique o módulo de pagamento")
-    print(state.status)
+    provider = core.registry.default_capability(LLMProvider)
+    print(provider.name if provider else "sem provider")
 finally:
     core.shutdown()
 ```
@@ -293,7 +294,7 @@ class OpenAICompatibleLLM(LLMProvider):
         response = self._client.post(
             f"{self._base_url}/chat/completions", json=payload, headers=headers
         )
-        response.raise_for_status()                 # erros viram exceção -> workflow.failed
+        response.raise_for_status()                 # erros viram exceção observável
         data = response.json()
         content = data["choices"][0]["message"]["content"]
         if on_chunk is not None:                    # chunk observacional (ex.: sem streaming real)
@@ -365,10 +366,10 @@ Configs típicas:
 
 ### Erros
 
-Se `complete` levantar qualquer exceção, o workflow emite
-`workflow.failed` e propaga o erro. Não é obrigatório herdar de `CoreError`;
-mas, se quiser um erro de domínio, herde de `CoreError` para que o entrypoint
-possa capturá-lo genericamente.
+Se `complete` levantar qualquer exceção, ela é observável na execução
+(`NodeResult.failed`/`ExecutionResult.error`). Não é obrigatório herdar de
+`CoreError`; mas, se quiser um erro de domínio, herde de `CoreError` para que o
+entrypoint possa capturá-lo genericamente.
 
 ## 9. Testando o plugin
 
@@ -417,10 +418,10 @@ def test_plugin_registers_llm_capability() -> None:
 ```
 
 Dica: use um provider determinístico (como `EchoLLM`) para testar a fiação.
-Para exercitar o **workflow ponta a ponta** de forma estável, use um provider com
+Para exercitar planejamento/execução de forma estável, use um provider com
 respostas roteirizadas (um `ScriptedLLMProvider`, como em
-`packages/core/tests/support/workflow.py` do próprio core), em vez de depender do
-texto dos prompts internos. Guarde chamadas de rede para testes marcados como
+`packages/core/tests/support/capabilities.py` do próprio core), em vez de depender
+de texto específico de prompt. Guarde chamadas de rede para testes marcados como
 integração.
 
 ## 10. Checklist

@@ -57,3 +57,7 @@ class UnsupportedCapabilityError(CapabilityError):
 
 class GraphBuildError(CoreError):
     """Raised when the execution graph cannot be constructed."""
+
+
+class DuplicateGroupError(CoreError):
+    """Raised when two plugins declare the same group id."""

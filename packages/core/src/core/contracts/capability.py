@@ -28,8 +28,9 @@ class CapabilityDescriptor(BaseModel):
         name: the capability name.
         kind: the capability kind (``"llm"``, ``"tool"``, ...).
         description: human-readable description.
-        groups: free-form labels for grouping/filtering.
+        groups: group ids this capability belongs to (may be several).
         parameters: parameters/schema relevant to invoking the capability.
+        constraints: descriptive constraints (e.g. read-only, needs approval).
         metadata: any additional descriptive data.
     """
 
@@ -41,6 +42,7 @@ class CapabilityDescriptor(BaseModel):
     description: str = ""
     groups: tuple[str, ...] = ()
     parameters: dict[str, Any] = Field(default_factory=dict)
+    constraints: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -57,6 +59,7 @@ class Capability(ABC):
 
     kind: ClassVar[str] = "generic"
     default: bool = False
+    groups: ClassVar[tuple[str, ...]] = ()
 
     @property
     @abstractmethod
@@ -71,5 +74,8 @@ class Capability(ABC):
         tool's JSON-schema ``parameters``).
         """
         return CapabilityDescriptor(
-            id=f"{self.kind}:{self.name}", name=self.name, kind=self.kind
+            id=f"{self.kind}:{self.name}",
+            name=self.name,
+            kind=self.kind,
+            groups=tuple(self.groups),
         )

@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from core.agent.state import AgentState, Message
 from core.contracts.capability import CapabilityDescriptor
+from core.contracts.interaction import InteractionProvider
 from core.contracts.plan import PlanNode
 
 
@@ -125,11 +126,13 @@ class NodeExecutionRequest:
         node: the plan node being executed.
         context: the shared execution context.
         results: results of nodes that already completed (read-only snapshot).
+        interaction: optional host-provided interaction mechanism.
     """
 
     node: PlanNode
     context: ExecutionContext
     results: dict[str, NodeResult] = field(default_factory=dict)
+    interaction: InteractionProvider | None = None
 
 
 @runtime_checkable

@@ -2,7 +2,8 @@
 
 The plugin lives in ``tests/integration/fake_plugin`` and imports only the
 public ``core`` API. These tests prove it can be loaded directly and through
-entry-point discovery, and that it drives the workflow end to end.
+entry-point discovery, and that its capabilities are resolved by the dynamic
+plan executor.
 """
 
 from __future__ import annotations
@@ -11,22 +12,32 @@ from typing import Any
 
 import pytest
 
-from core import LLMProvider, build_core
+from core import (
+    ExecutionContext,
+    ExecutionPlan,
+    LLMProvider,
+    PlanNode,
+    build_core,
+)
 from core.plugins.discovery import EntryPointDiscoverer
 from tests.integration.fake_plugin import PLUGIN_ID, ExternalFakePlugin, build
 
 
-def test_external_plugin_runs_workflow_end_to_end() -> None:
+def _plan() -> ExecutionPlan:
+    return ExecutionPlan(
+        id="integration-plan",
+        nodes=(PlanNode(id="run-tool", capability="tool:noop"),),
+    )
+
+
+def test_external_plugin_runs_plan_end_to_end() -> None:
     core = build_core(plugins=[ExternalFakePlugin()], discoverers=[])
 
-    state = core.workflow.run(request="do something")
+    result = core.executor.run(_plan(), ExecutionContext(request="do something"))
     core.shutdown()
 
-    assert state.status == "completed"
-    assert state.review is not None
-    assert state.review.approved is True
-    assert [task.id for task in state.completed_tasks] == ["task-1", "task-2"]
-    assert [record.validator for record in state.validations] == ["always-pass"]
+    assert result.status == "completed"
+    assert result.results["run-tool"].success is True
 
 
 def test_external_plugin_registers_capabilities_and_metadata() -> None:
@@ -73,10 +84,10 @@ def test_external_plugin_loaded_via_entry_point(
     core = build_core()  # default discovery uses the patched entry points
     assert PLUGIN_ID in core.registry
 
-    state = core.workflow.run(request="x")
+    result = core.executor.run(_plan(), ExecutionContext(request="x"))
     core.shutdown()
 
-    assert state.status == "completed"
+    assert result.status == "completed"
 
 
 def test_entry_point_discoverer_default_group() -> None:

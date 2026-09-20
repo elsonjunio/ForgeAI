@@ -2,45 +2,30 @@
 
 The public API is intentionally small and stable:
 
-    - state:        AgentState, Message; WorkflowState and friends
-    - runtime:      AgentRuntime, WorkflowRuntime, build_core, CoreContainer
+    - state:        AgentState, Message
+    - runtime:      AgentRuntime, PlanExecutor, GraphBuilder, build_core
     - extension:    Plugin, PluginMetadata, PluginContext, PluginRegistry
     - discovery:    Discoverer, EntryPointDiscoverer, discover_plugins
     - capabilities: Capability, CapabilityDescriptor, LLMProvider, Tool,
-                    CodeAnalyzer, Validator, Planner
+                    CodeAnalyzer, Validator, Discoverer, Planner,
+                    ComplexityEvaluator
     - execution:    ExecutionPlan, PlanNode, PlanEdge, ExecutionContext,
                     NodeResult, ExecutionControl, callbacks, InteractionProvider
-    - events:       Event, EventBus, CoreEvents, WorkflowEvents, EventHandler
-    - config:       CoreConfig, LangGraphOptions, WorkflowOptions, PluginSlot
-    - contracts:    ToolContract, NodeContract, NodeContribution, AgentNode
+    - groups:       Group
+    - events:       Event, EventBus, CoreEvents, EventHandler
+    - config:       CoreConfig, LangGraphOptions, PluginSlot
 
-The core ships no LLM provider and no concrete tool; everything is contributed
-by plugins. With zero plugins the framework still builds and runs.
+The core ships no LLM provider, no planner and no concrete tool; everything is
+contributed by plugins. With zero plugins the framework still builds and runs.
 """
 
 from __future__ import annotations
 
 from core.agent.graph import GraphBuilder, PlanExecutor
-from core.agent.runtime import AgentRuntime, WorkflowRuntime
+from core.agent.runtime import AgentRuntime
 from core.agent.state import AgentState, AgentStatus, Message
-from core.agent.workflow import WorkflowContext
-from core.agent.workflow_state import (
-    DiscoveredContext,
-    Plan,
-    ReviewResult,
-    Task,
-    ValidationRecord,
-    WorkflowError,
-    WorkflowState,
-    WorkflowStatus,
-)
 from core.config.loader import load_config
-from core.config.schema import (
-    CoreConfig,
-    LangGraphOptions,
-    PluginSlot,
-    WorkflowOptions,
-)
+from core.config.schema import CoreConfig, LangGraphOptions, PluginSlot
 from core.contracts.analyzer import AnalysisResult, CodeAnalyzer
 from core.contracts.callbacks import (
     ControlCallback,
@@ -49,6 +34,11 @@ from core.contracts.callbacks import (
     ExecutionObserver,
 )
 from core.contracts.capability import Capability, CapabilityDescriptor
+from core.contracts.complexity import (
+    ComplexityAssessment,
+    ComplexityEvaluator,
+    ComplexityLevel,
+)
 from core.contracts.discovery import Discoverer
 from core.contracts.execution import (
     ControlAction,
@@ -59,6 +49,7 @@ from core.contracts.execution import (
     NodeExecutionRequest,
     NodeResult,
 )
+from core.contracts.group import Group
 from core.contracts.interaction import (
     InteractionProvider,
     InteractionRequest,
@@ -85,6 +76,7 @@ from core.errors import (
     CoreError,
     DiscoveryError,
     DuplicateCapabilityError,
+    DuplicateGroupError,
     DuplicatePluginError,
     GraphBuildError,
     InvalidGraphError,
@@ -96,7 +88,7 @@ from core.errors import (
 )
 from core.events.bus import EventBus, Subscription
 from core.events.event import Event
-from core.events.types import CoreEvents, EventHandler, WorkflowEvents
+from core.events.types import CoreEvents, EventHandler
 from core.plugins.base import Plugin
 from core.plugins.context import PluginContext
 from core.plugins.discovery import (
@@ -122,6 +114,9 @@ __all__ = [
     "CapabilityError",
     "CapabilitySource",
     "CodeAnalyzer",
+    "ComplexityAssessment",
+    "ComplexityEvaluator",
+    "ComplexityLevel",
     "ConfigError",
     "ControlAction",
     "ControlCallback",
@@ -130,9 +125,9 @@ __all__ = [
     "CoreError",
     "CoreEvents",
     "Discoverer",
-    "DiscoveredContext",
     "DiscoveryError",
     "DuplicateCapabilityError",
+    "DuplicateGroupError",
     "DuplicatePluginError",
     "EntryPointDiscoverer",
     "Event",
@@ -148,6 +143,7 @@ __all__ = [
     "Executable",
     "GraphBuildError",
     "GraphBuilder",
+    "Group",
     "InteractionProvider",
     "InteractionRequest",
     "InteractionResponse",
@@ -166,7 +162,6 @@ __all__ = [
     "NodeContribution",
     "NodeExecutionRequest",
     "NodeResult",
-    "Plan",
     "PlanEdge",
     "PlanExecutor",
     "PlanNode",
@@ -179,24 +174,14 @@ __all__ = [
     "PluginMetadata",
     "PluginRegistry",
     "PluginSlot",
-    "ReviewResult",
     "Subscription",
-    "Task",
     "Tool",
     "ToolContract",
     "ToolResult",
     "UnsupportedCapabilityError",
     "ValidationInput",
-    "ValidationRecord",
     "ValidationResult",
     "Validator",
-    "WorkflowContext",
-    "WorkflowError",
-    "WorkflowEvents",
-    "WorkflowOptions",
-    "WorkflowRuntime",
-    "WorkflowState",
-    "WorkflowStatus",
     "build_core",
     "discover_plugins",
     "load_config",

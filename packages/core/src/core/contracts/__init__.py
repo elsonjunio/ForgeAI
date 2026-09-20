@@ -8,6 +8,11 @@ from core.contracts.callbacks import (
     ExecutionObserver,
 )
 from core.contracts.capability import Capability, CapabilityDescriptor
+from core.contracts.complexity import (
+    ComplexityAssessment,
+    ComplexityEvaluator,
+    ComplexityLevel,
+)
 from core.contracts.discovery import Discoverer
 from core.contracts.execution import (
     ControlAction,
@@ -18,6 +23,7 @@ from core.contracts.execution import (
     NodeExecutionRequest,
     NodeResult,
 )
+from core.contracts.group import Group
 from core.contracts.interaction import (
     InteractionProvider,
     InteractionRequest,
@@ -45,6 +51,9 @@ __all__ = [
     "CapabilityDescriptor",
     "CapabilitySource",
     "CodeAnalyzer",
+    "ComplexityAssessment",
+    "ComplexityEvaluator",
+    "ComplexityLevel",
     "ControlAction",
     "ControlCallback",
     "Discoverer",
@@ -56,6 +65,7 @@ __all__ = [
     "ExecutionPlan",
     "ExecutionResult",
     "Executable",
+    "Group",
     "InteractionProvider",
     "InteractionRequest",
     "InteractionResponse",

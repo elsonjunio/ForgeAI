@@ -11,11 +11,12 @@ from core.events.types import EventHandler
 
 if TYPE_CHECKING:
     from core.contracts.capability import Capability
+    from core.contracts.interaction import InteractionProvider
     from core.plugins.registry import PluginRegistry
 
 
 class PluginContext:
-    """Services a plugin can use: configuration, events and capabilities.
+    """Services a plugin can use: configuration, events, capabilities and interaction.
 
     The context is deliberately narrow — plugins get exactly what they need and
     no more, which keeps the core's extension surface small and stable.
@@ -28,15 +29,25 @@ class PluginContext:
         config: PluginSlot,
         events: EventBus,
         registry: PluginRegistry,
+        interaction: InteractionProvider | None = None,
     ) -> None:
         self._plugin_id = plugin_id
         self._config = config
         self._events = events
         self._registry = registry
+        self._interaction = interaction
 
     @property
     def plugin_id(self) -> str:
         return self._plugin_id
+
+    @property
+    def interaction(self) -> InteractionProvider | None:
+        """Host-provided interaction mechanism, when available.
+
+        The core does not know how the host implements it (terminal, web, ...).
+        """
+        return self._interaction
 
     @property
     def config(self) -> PluginSlot:

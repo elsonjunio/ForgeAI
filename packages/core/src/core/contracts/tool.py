@@ -68,6 +68,7 @@ class Tool(Capability):
             name=self.name,
             kind=self.kind,
             description=self.contract.description,
+            groups=tuple(self.groups),
             parameters=dict(self.contract.parameters),
         )
 

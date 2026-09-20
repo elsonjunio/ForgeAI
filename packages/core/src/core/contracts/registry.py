@@ -1,7 +1,7 @@
 """Capability registry contract.
 
 A narrow, structural interface for resolving capabilities. ``PluginRegistry``
-implements it; orchestration code (for example ``WorkflowContext``) depends on
+implements it; orchestration code (for example the plan executor) depends on
 this protocol rather than on the concrete registry, keeping the agent layer
 independent of the plugin implementation layer.
 """

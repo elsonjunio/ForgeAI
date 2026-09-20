@@ -2,25 +2,23 @@
 
 Este guia mostra como embutir o `core-agent` em um ponto de entrada — um CLI de
 terminal, um script de automação, um job de CI ou qualquer ferramenta que rode
-Python. O core é uma **biblioteca**: ele não traz CLI, servidor nem LLM; você
-fornece o entrypoint e as capacidades (via plugins).
+Python. O core é uma **biblioteca**: ele não traz CLI, servidor, planner nem LLM;
+você fornece o entrypoint, os plugins e o host services (histórico, interação).
 
 > Requisitos: Python 3.10+. Instale o core com `pip install -e "packages/core"`
 > (a partir da raiz do monorepo) ou como dependência `core-agent`.
 
 ## O que o entrypoint precisa fazer
 
-Todo entrypoint segue o mesmo ciclo:
-
-1. **Montar** o core com `build_core(...)`, opcionalmente com configuração e plugins.
-2. **Executar** o runtime genérico (`container.runtime`) e/ou o workflow do Code
-   Agent (`container.workflow`).
-3. **Observar** eventos (logs/telemetria) e tratar `CoreError`.
-4. **Encerrar** com `container.shutdown()`.
+1. **Montar** o core com `build_core(...)` (config, plugins, `interaction`).
+2. **Planejar** com um `Planner` plugin → `ExecutionPlan`.
+3. **Executar** o plano com `container.executor` (`ExecutionPlan` → LangGraph).
+4. **Observar** eventos/callbacks e tratar `CoreError`.
+5. **Encerrar** com `container.shutdown()`.
 
 `build_core` devolve um `CoreContainer` com: `config`, `events`, `registry`,
-`runtime` (grafo genérico de nós contribuídos por plugins) e `workflow`
-(pipeline do Code Agent).
+`runtime` (grafo genérico de nós contribuídos por plugins) e `executor`
+(execução dinâmica de planos).
 
 ## Uso mínimo (zero plugins)
 
@@ -37,56 +35,94 @@ finally:
     core.shutdown()
 ```
 
-O core sempre monta com zero plugins. O `workflow`, porém, só roda quando há um
-`LLMProvider` disponível (caso contrário levanta `MissingCapabilityError`).
+O core sempre monta com zero plugins. Sem plugins não há planner nem
+capabilities, então a execução de planos não tem o que resolver.
 
-## Rodando o workflow do Code Agent
+## Execução dinâmica (ExecutionPlan → LangGraph)
+
+```
+Request → Planner (plugin) → ExecutionPlan → GraphBuilder → LangGraph → PlanExecutor → ExecutionResult
+```
+
+- `Planner` (`kind="planner"`) produz um `ExecutionPlan` e **não conhece
+  LangGraph**.
+- `container.executor` valida o plano, monta o grafo e executa.
+- Cada `PlanNode` referencia uma capability por id `"<kind>:<name>"`, resolvida
+  pelo registry. A execução usa o protocolo `Executable`
+  (`execute(request) -> NodeResult`) ou o adaptador de `Tool` (`invoke`).
 
 ```python
-from core import CoreError, build_core
+from core import ExecutionContext, ExecutionPlan, PlanNode, build_core
 
-core = build_core()          # discoverers=None => descobre por entry points
+core = build_core()
 try:
-    state = core.workflow.run(request="refatore o módulo de pagamento")
-except CoreError as exc:
-    print(f"falhou ({type(exc).__name__}): {exc}")
-    raise
+    plan = ExecutionPlan(
+        id="p1",
+        nodes=(PlanNode(id="step", capability="tool:meu-tool"),),
+    )
+    result = core.executor.run(plan, ExecutionContext(request="fazer algo"))
+    print(result.status, result.results)   # completed { 'step': NodeResult(...) }
 finally:
     core.shutdown()
-
-print(state.status)                 # completed | failed
-print(state.plan.summary)           # plano produzido
-print([t.output for t in state.completed_tasks])
-print(state.review.approved)
 ```
 
-Para uso assíncrono (útil dentro de frameworks async):
+Encadeando planejamento e execução:
 
 ```python
-import asyncio
-from core import build_core
+from core import ExecutionContext, Planner, PlanningRequest, build_core
 
+core = build_core()
+try:
+    planner = core.registry.default_capability(Planner)
+    if planner is None:
+        raise RuntimeError("nenhum planner registrado")
 
-async def run_once(request: str):
-    core = build_core()
-    try:
-        return await core.workflow.arun(request=request)
-    finally:
-        core.shutdown()
-
-
-state = asyncio.run(run_once("revise o Pull Request #42"))
+    context = ExecutionContext(request="refatore o módulo de pagamento")
+    planning = PlanningRequest(
+        request="refatore o módulo de pagamento",
+        context=context,
+        planners=tuple(core.registry.planner_descriptors()),
+    )
+    plan = planner.plan(planning).plan
+    result = core.executor.run(plan, context)
+    print(result.status)
+finally:
+    core.shutdown()
 ```
+
+**Validação antes de executar**: ids únicos, edges válidas, nodes com capability,
+capabilities disponíveis e executáveis (`InvalidPlanError`,
+`MissingCapabilityError`, `UnsupportedCapabilityError`). Erros de uma capability
+durante a execução viram `NodeResult.failed` observável.
+
+## Grupos e planners
+
+**Grupos** são áreas de domínio declarativas e many-to-many (uma capability/plugin
+pode estar em vários). **Planners** sem grupos são globais; com grupos são
+especializados. O core só descobre/registra/agrupa:
+
+```python
+core.registry.groups()                       # grupos declarados
+core.registry.capabilities_in_group("code")  # capabilities do grupo
+core.registry.plugin_ids_in_group("code")    # plugins do grupo
+core.registry.planners()                     # todos os planners
+core.registry.planners(group="code")         # planners do grupo
+core.registry.planner_descriptors(group="code")
+```
+
+O planner global recebe os **descriptors** dos especializados em
+`PlanningRequest.planners`; compor (main → grupo) é responsabilidade do
+host/plugin. O planner nunca executa capabilities — ele devolve um
+`ExecutionPlan`.
 
 ## Configurando o core
 
-`CoreConfig` é um modelo Pydantic. O entrypoint pode montá-lo de um mapping ou de
-um arquivo JSON via `load_config`:
+`CoreConfig` é um modelo Pydantic; `load_config` aceita mapping ou arquivo JSON:
 
 ```python
-from core import CoreConfig, build_core, load_config
+from core import build_core, load_config
 
-config = load_config("agent.json")            # ou load_config({...})
+config = load_config("agent.json")   # ou load_config({...})
 core = build_core(config=config)
 ```
 
@@ -101,64 +137,103 @@ core = build_core(config=config)
     "code-agent-plugin-git": { "enabled": true }
   },
   "defaults": { "llm": "openai" },
-  "langgraph": { "recursion_limit": 25 },
-  "workflow": { "max_attempts": 3 }
+  "langgraph": { "recursion_limit": 25 }
 }
 ```
-
-Campos principais:
 
 | Campo | Efeito |
 |---|---|
 | `plugins.<id>.enabled` | `false` faz o plugin nem ser registrado. |
 | `plugins.<id>.settings` | Fica disponível ao plugin em `context.settings`. |
 | `defaults` | Provider default por `kind` (`{"llm": "openai"}`) ou nome da classe. |
-| `workflow.max_attempts` | Limite de passagens de `execution` (retry). |
 | `langgraph.recursion_limit` | Orçamento de recursão do grafo genérico. |
 
-## Selecionando plugins explicitamente
+## Interação com o host
 
-Se você não quer depender de entry points (por exemplo, em testes ou em um
-bundle), passe as instâncias:
+`InteractionProvider` é fornecido pelo host (nunca é uma capability) e permite a
+plugins/capabilities pedir confirmação, informação ou autorização:
 
 ```python
-from core import build_core
-from meu_pacote import MeuPlugin
+from core import InteractionRequest, InteractionResponse, build_core
 
-core = build_core(plugins=[MeuPlugin()], discoverers=[])
+
+class TerminalInteraction:
+    def request(self, request: InteractionRequest) -> InteractionResponse:
+        answer = input(f"{request.message} ")
+        return InteractionResponse(value=answer)
+
+
+core = build_core(interaction=TerminalInteraction())
 ```
 
-> **Atenção à distinção de "discovery":**
-> - `build_core(discoverers=...)` é a **descoberta de plugins** no momento do build
->   (por padrão, entry points do grupo `core_agent.plugins`).
-> - A etapa `discovery` do workflow consulta os **`Discoverer` registrados como
->   capability** (via `declare_capabilities`/`context.register_capability`).
+Plugins acessam via `PluginContext.interaction`; capabilities em execução via
+`NodeExecutionRequest.interaction`.
+
+## Observabilidade (eventos e callbacks)
+
+```python
+from core import ExecutionEvent, ExecutionEventKind, build_core
+
+
+class LoggingObserver:
+    def on_event(self, event: ExecutionEvent) -> None:
+        print(f"[{event.kind.value}] node={event.node_id}")
+
+
+core = build_core()
+executor = core.executor  # o executor criado por build_core não tem observer
+```
+
+Para observar/controlar, construa um executor próprio com callbacks:
+
+```python
+from core import ExecutionContext, PlanExecutor, build_core
+
+core = build_core()
+executor = PlanExecutor(registry=core.registry, observer=LoggingObserver())
+result = executor.run(plan, ExecutionContext(request="..."))
+```
+
+Um `ControlCallback` pode solicitar `CONTINUE`/`PAUSE`/`INTERRUPT`/`RETRY` após
+cada node:
+
+```python
+from core import ControlAction, ExecutionContext, ExecutionControl, NodeResult
+
+
+class StopOnFailure:
+    def on_node_complete(
+        self, context: ExecutionContext, result: NodeResult
+    ) -> ExecutionControl | None:
+        if result.success:
+            return None
+        return ExecutionControl(action=ControlAction.INTERRUPT, reason="falhou")
+```
+
+`PAUSE`/`INTERRUPT` param a execução; **não há checkpoint persistente** ainda (a
+limitação é documentada, não simulada). O runtime genérico emite
+`CoreEvents.AGENT_STARTED`/`AGENT_FINISHED` e `AGENT_NODE_STARTED`/`FINISHED`.
 
 ## Exemplo completo: CLI de terminal
 
 `meu_agente/cli.py`:
 
 ```python
-"""CLI mínimo sobre o core-agent."""
+"""CLI mínimo sobre o core-agent (planejamento + execução)."""
 
 from __future__ import annotations
 
 import argparse
 import sys
 
-from core import CoreConfig, CoreError, build_core, load_config
-
-
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(prog="meu-code-agent")
-    parser.add_argument("request", nargs="?", help="pedido do usuário")
-    parser.add_argument("--config", metavar="ARQ", help="config JSON")
-    parser.add_argument("--json", action="store_true", help="saída JSON")
-    return parser.parse_args(argv)
+from core import CoreConfig, CoreError, Planner, PlanningRequest, ExecutionContext, build_core, load_config
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
+    parser = argparse.ArgumentParser(prog="meu-code-agent")
+    parser.add_argument("request", nargs="?")
+    parser.add_argument("--config", metavar="ARQ")
+    args = parser.parse_args(argv)
     if not args.request:
         print("erro: informe um pedido", file=sys.stderr)
         return 2
@@ -166,106 +241,72 @@ def main(argv: list[str] | None = None) -> int:
     config = load_config(args.config) if args.config else CoreConfig()
     core = build_core(config=config)
     try:
-        state = core.workflow.run(request=args.request)
+        planner = core.registry.default_capability(Planner)
+        if planner is None:
+            print("erro: nenhum planner registrado", file=sys.stderr)
+            return 1
+        context = ExecutionContext(request=args.request)
+        planning = PlanningRequest(
+            request=args.request,
+            context=context,
+            planners=tuple(core.registry.planner_descriptors()),
+        )
+        plan = planner.plan(planning).plan
+        result = core.executor.run(plan, context)
     except CoreError as exc:
         print(f"erro ({type(exc).__name__}): {exc}", file=sys.stderr)
         return 1
     finally:
         core.shutdown()
 
-    if args.json:
-        print(state.model_dump_json(indent=2))
-    else:
-        print(f"status: {state.status}")
-        for task in state.completed_tasks:
-            print(f"- {task.id}: {task.output}")
-    return 0 if state.status == "completed" else 1
+    for node_id, node_result in result.results.items():
+        print(f"- {node_id}: {'ok' if node_result.success else node_result.error}")
+    return 0 if result.status == "completed" else 1
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-No `pyproject.toml` **da sua aplicação** (não do core), registre o script:
+No `pyproject.toml` **da sua aplicação** (não do core):
 
 ```toml
 [project.scripts]
 meu-code-agent = "meu_agente.cli:main"
 ```
 
-Depois de `pip install -e .`:
-
-```bash
-meu-code-agent "corrija o bug do parser" --config agent.json
-meu-code-agent --json "revise o README" > resultado.json
-```
-
 ## Usando em outra ferramenta de automação
 
-O core é apenas uma biblioteca Python; exponha `run_once` para o seu
-orquestrador (task runner, handler HTTP, bot, job agendado):
+O core é apenas uma biblioteca; exponha uma função para o seu orquestrador:
 
 ```python
-from core import CoreError, build_core
+from core import CoreError, ExecutionContext, Planner, PlanningRequest, build_core
 
 
 def run_agent(request: str, config=None) -> dict:
-    """Fronteira síncrona reutilizável por qualquer automação."""
     core = build_core(config=config)
     try:
-        state = core.workflow.run(request=request)
+        planner = core.registry.default_capability(Planner)
+        if planner is None:
+            return {"ok": False, "error": "MissingPlanner"}
+        context = ExecutionContext(request=request)
+        planning = PlanningRequest(
+            request=request,
+            context=context,
+            planners=tuple(core.registry.planner_descriptors()),
+        )
+        plan = planner.plan(planning).plan
+        result = core.executor.run(plan, context)
     except CoreError as exc:
         return {"ok": False, "error": type(exc).__name__, "message": str(exc)}
     finally:
         core.shutdown()
 
     return {
-        "ok": state.status == "completed",
-        "status": state.status,
-        "tasks": [{"id": t.id, "output": t.output} for t in state.completed_tasks],
-        "review": state.review.model_dump() if state.review else None,
+        "ok": result.status == "completed",
+        "status": result.status,
+        "nodes": {nid: r.success for nid, r in result.results.items()},
     }
-```
-
-### Observabilidade por eventos
-
-Assine eventos para logging/telemetria. Não é preciso tocar no core:
-
-```python
-from core import WorkflowEvents, build_core
-
-core = build_core()
-logger = print  # troque pelo seu logger
-
-for event_type in (
-    WorkflowEvents.WORKFLOW_STARTED,
-    WorkflowEvents.STAGE_STARTED,
-    WorkflowEvents.STAGE_FINISHED,
-    WorkflowEvents.WORKFLOW_RETRY,
-    WorkflowEvents.WORKFLOW_COMPLETED,
-    WorkflowEvents.WORKFLOW_FAILED,
-):
-    core.events.subscribe(event_type, lambda event: logger(f"[{event.type}] {event.source}"))
-
-state = core.workflow.run(request="...")
-core.shutdown()
-```
-
-O runtime genérico emite `CoreEvents.AGENT_STARTED`/`AGENT_FINISHED` e
-`AGENT_NODE_STARTED`/`AGENT_NODE_FINISHED`.
-
-### Reagir a retry/interrupção
-
-O workflow repete `execution` enquanto `attempts < workflow.max_attempts` e
-encerra como `failed` quando esgota. O entrypoint decide o que fazer com o
-estado final:
-
-```python
-state = core.workflow.run(request="...")
-if state.status == "failed":
-    for err in state.errors:
-        print(f"{err.stage}: {err.message}")
-    # reenfileirar, notificar, abrir issue, etc.
 ```
 
 ## Tratamento de erros
@@ -274,24 +315,20 @@ Capture `CoreError` no entrypoint; os subtipos dão contexto:
 
 | Exceção | Quando ocorre |
 |---|---|
-| `MissingCapabilityError` | Faltou um provider exigido (ex.: nenhum `LLMProvider`). |
+| `MissingCapabilityError` | Um node referencia capability inexistente (ou nenhum provider exigido). |
+| `UnsupportedCapabilityError` | A capability existe mas não é executável como node. |
+| `InvalidPlanError` | Plano inválido (ids duplicados, edges soltas, self-loop, node sem capability). |
+| `GraphBuildError` | Falha ao compilar o grafo. |
 | `AmbiguousCapabilityError` | Vários providers e nenhum default selecionado. |
-| `DuplicateCapabilityError` | Dois providers com o mesmo `(kind, name)`. |
+| `DuplicateCapabilityError` / `DuplicateGroupError` | Conflito de capability/grupo. |
 | `DuplicatePluginError` / `InvalidPluginError` | Plugin duplicado ou inválido. |
 | `DiscoveryError` | Falha ao carregar um entry point de plugin. |
-| `ConfigError` | Configuração ausente/ inválida. |
+| `ConfigError` | Configuração ausente/inválida. |
 | `InvalidGraphError` | Nós contribuídos não formam um grafo válido. |
-
-Erros de capability ausente são explícitos:
-
-```text
-MissingCapabilityError: no LLM provider is registered (capability kind 'llm');
-install a plugin that provides an LLMProvider
-```
 
 ## Executando sem descoberta automática
 
-Útil em CI e ambientes herméticos (evita depender do que está instalado):
+Útil em CI e ambientes herméticos:
 
 ```python
 core = build_core(
@@ -304,36 +341,33 @@ core = build_core(
 ## Boas práticas
 
 - Sempre `try/finally` com `core.shutdown()` para liberar recursos dos plugins.
-- Reaproveite **uma** instância de `CoreContainer` por processo quando possível;
-  crie uma por execução apenas se precisar de isolamento.
-- Não importe `langgraph`/`langchain_core` no seu entrypoint; use só a API pública
-  de `core`.
-- Para CLIs, retorne um código de saída coerente (`0` sucesso, `1` falha do
-  workflow, `2` uso incorreto).
-- Não hardcode credenciais/config no código: use `load_config` + variáveis de
-  ambiente carregadas pelo seu app.
+- Não importe `langgraph`/`langchain_core` no seu entrypoint; use só a API
+  pública de `core`.
+- O histórico de conversa é responsabilidade do host: monte
+  `ExecutionContext.history` explicitamente; o core nunca busca histórico.
+- Para CLIs, retorne código de saída coerente (`0` sucesso, `1` falha, `2` uso
+  incorreto).
 
 ## Referência rápida
 
 ```python
 from core import (
-    build_core,        # build_core(config=None, *, plugins=(), discoverers=None)
-    load_config,       # load_config(None | mapping | "arquivo.json")
-    CoreConfig, CoreError, MissingCapabilityError,
-    CoreEvents, WorkflowEvents,
+    build_core, load_config, CoreConfig, CoreError,
+    Planner, PlanningRequest, ExecutionPlan, PlanNode,
+    ExecutionContext, PlanExecutor, InteractionProvider,
+    CoreEvents, ExecutionEventKind,
 )
 
-core.config            # CoreConfig resolvido
-core.events            # EventBus (subscribe/publish)
-core.registry          # PluginRegistry (capabilities)
-core.runtime.run(task="...")            # Agente genérico -> AgentState
-core.workflow.run(request="...")        # Code Agent -> WorkflowState
-core.workflow.arun(request="...")       # variante async
-core.shutdown()                         # desativa plugins (ordem reversa)
+core.config        # CoreConfig resolvido
+core.events        # EventBus (subscribe/publish)
+core.registry      # PluginRegistry (capabilities, groups, planners)
+core.runtime.run(task="...")             # grafo genérico -> AgentState
+core.executor.run(plan, context)         # plano -> ExecutionResult
+core.shutdown()                          # desativa plugins (ordem reversa)
 ```
 
 Para entender a arquitetura e como escrever um plugin externo, veja o
 [`README.md`](../README.md). Para um provider de LLM, veja
 [`creating-an-llm-plugin.md`](creating-an-llm-plugin.md); para tools, validators,
-analyzers, discoverers e nós, veja
+analyzers, discoverers, planners e nós, veja
 [`creating-plugins.md`](creating-plugins.md).

@@ -1,8 +1,9 @@
 """Validator contract: post-execution checks contributed by plugins.
 
-Validators are capability providers consulted by the ``validation`` stage of the
-workflow. The core defines the interface only; concrete validators (linters,
-test runners, policy checks, ...) are contributed by plugins.
+Validators are capability providers. The core defines the interface only;
+concrete validators (linters, test runners, policy checks, ...) are contributed
+by plugins and invoked by whoever needs them (a planner, another capability or
+the host).
 """
 
 from __future__ import annotations

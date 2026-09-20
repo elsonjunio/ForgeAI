@@ -29,6 +29,7 @@ class PlanningRequest(BaseModel):
     Args:
         request: the original user request.
         context: the shared execution context (state, history, capabilities).
+        group: the scope being planned (``None`` means global/whole request).
         planners: descriptors of the planners/groups available for planning.
         metadata: free-form planning metadata.
 
@@ -40,6 +41,7 @@ class PlanningRequest(BaseModel):
 
     request: str
     context: ExecutionContext
+    group: str | None = None
     planners: tuple[CapabilityDescriptor, ...] = ()
     metadata: dict[str, Any] = Field(default_factory=dict)
 

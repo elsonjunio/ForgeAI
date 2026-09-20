@@ -43,6 +43,7 @@ from core.contracts.execution import (
     NodeExecutionRequest,
     NodeResult,
 )
+from core.contracts.interaction import InteractionProvider
 from core.contracts.plan import ExecutionPlan, PlanNode
 from core.contracts.registry import CapabilitySource
 from core.contracts.tool import Tool
@@ -118,6 +119,7 @@ class GraphBuilder:
         control: ControlCallback | None = None,
         max_node_retries: int = 0,
         recursion_limit: int = _DEFAULT_RECURSION_LIMIT,
+        interaction: InteractionProvider | None = None,
     ) -> None:
         if max_node_retries < 0:
             raise ValueError("max_node_retries must be >= 0")
@@ -126,6 +128,7 @@ class GraphBuilder:
         self._control = control
         self._max_node_retries = max_node_retries
         self._recursion_limit = recursion_limit
+        self._interaction = interaction
 
     @property
     def recursion_limit(self) -> int:
@@ -286,6 +289,7 @@ class GraphBuilder:
             node=node,
             context=execution.context,
             results=dict(execution.results),
+            interaction=self._interaction,
         )
         try:
             if isinstance(capability, Executable):
@@ -364,6 +368,7 @@ class PlanExecutor:
         control: ControlCallback | None = None,
         max_node_retries: int = 0,
         recursion_limit: int = _DEFAULT_RECURSION_LIMIT,
+        interaction: InteractionProvider | None = None,
     ) -> None:
         self._observer = observer
         self._builder = GraphBuilder(
@@ -372,6 +377,7 @@ class PlanExecutor:
             control=control,
             max_node_retries=max_node_retries,
             recursion_limit=recursion_limit,
+            interaction=interaction,
         )
 
     @property

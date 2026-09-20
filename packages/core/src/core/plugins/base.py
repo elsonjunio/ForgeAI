@@ -10,6 +10,7 @@ from core.contracts.tool import ToolContract
 
 if TYPE_CHECKING:
     from core.contracts.capability import Capability
+    from core.contracts.group import Group
     from core.events.types import EventHandler
     from core.plugins.context import PluginContext
 
@@ -27,6 +28,7 @@ class Plugin:
       defaults to calling ``deactivate``, so older plugins keep working.
     * ``declare_capabilities`` — capabilities (LLM, tool, analyzer, discoverer)
       contributed to the registry.
+    * ``declare_groups`` — groups this plugin introduces/describes.
     * ``declare_tools`` — declarative tool descriptors (no implementation).
     * ``declare_nodes`` — state transformations wired into the agent graph.
     * ``event_handlers`` — subscriptions registered when the plugin activates.
@@ -42,6 +44,7 @@ class Plugin:
     author: str = ""
     homepage: str | None = None
     tags: tuple[str, ...] = ()
+    groups: tuple[str, ...] = ()
 
     def metadata(self) -> PluginMetadata:
         """Return the plugin's identity, version and descriptive metadata."""
@@ -89,6 +92,14 @@ class Plugin:
 
     def declare_capabilities(self) -> list[Capability]:
         """Declare the capabilities (providers) this plugin contributes."""
+        return []
+
+    def declare_groups(self) -> list[Group]:
+        """Declare/describe the groups this plugin introduces (optional).
+
+        A plugin may belong to groups without declaring them; declaring a group
+        only provides its description. Capabilities reference groups by id.
+        """
         return []
 
     def declare_tools(self) -> list[ToolContract]:

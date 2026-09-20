@@ -69,25 +69,24 @@ implementação dela. Qualquer pacote externo que forneça `LLMProvider`, `Tool`
 
 | Camada | Pacotes | Responsabilidade |
 |---|---|---|
-| **Domínio** | `core.contracts`, `core.agent.state`, `core.agent.workflow_state`, `core.events.event`, `core.config.schema` | Modelos puros e contratos (Pydantic), sem I/O e sem LangGraph. |
-| **Runtime** | `core.agent.runtime`, `core.agent.workflow`, `core.plugins`, `core.events.bus` | Orquestração. `AgentRuntime`/`WorkflowRuntime` encapsulam LangGraph; `PluginRegistry` administra o ciclo de vida e as capabilities dos plugins. |
+| **Domínio** | `core.contracts`, `core.agent.state`, `core.events.event`, `core.config.schema` | Modelos puros e contratos (Pydantic), sem I/O e sem LangGraph. |
+| **Runtime** | `core.agent.runtime`, `core.agent.graph`, `core.plugins`, `core.events.bus` | Orquestração. `AgentRuntime`/`GraphBuilder`/`PlanExecutor` encapsulam LangGraph; `PluginRegistry` administra ciclo de vida, capabilities e grupos. |
 | **Infraestrutura** | `core.config.loader`, `core.runtime` | Carregamento de configuração (dict/JSON) e composition root (`build_core`). |
 
 ### Estrutura
 
 ```
 packages/core/src/core/
-  agent/        AgentState, Message, AgentRuntime; WorkflowState, workflow
-                stages, WorkflowRuntime; GraphBuilder, PlanExecutor
+  agent/        AgentState, Message, AgentRuntime; GraphBuilder, PlanExecutor
                 (runtime.py e graph.py são as únicas importações de LangGraph)
-  contracts/    Capability, CapabilityDescriptor, CapabilitySource, LLMProvider,
-                Tool, CodeAnalyzer, Validator, Discoverer, Planner,
-                ExecutionPlan/PlanNode/PlanEdge, ExecutionContext, NodeResult,
-                ExecutionControl, callbacks, InteractionProvider, PluginMetadata,
-                ToolContract, NodeContract, NodeContribution
+  contracts/    Capability, CapabilityDescriptor, CapabilitySource, Group,
+                LLMProvider, Tool, CodeAnalyzer, Validator, Discoverer, Planner,
+                ComplexityEvaluator, ExecutionPlan/PlanNode/PlanEdge,
+                ExecutionContext, NodeResult, ExecutionControl, callbacks,
+                InteractionProvider, PluginMetadata, NodeContract, NodeContribution
   plugins/      Plugin, PluginContext, PluginRegistry, EntryPointDiscoverer
-  events/       Event, EventBus, CoreEvents, WorkflowEvents, EventHandler
-  config/       CoreConfig, LangGraphOptions, WorkflowOptions, PluginSlot
+  events/       Event, EventBus, CoreEvents, EventHandler
+  config/       CoreConfig, LangGraphOptions, PluginSlot
   runtime/      build_core, CoreContainer  (composition root)
 packages/core/tests/    testes (inclui tests/integration com plugin externo)
 ```
@@ -138,10 +137,10 @@ packages/core/tests/    testes (inclui tests/integration com plugin externo)
    sem conhecer nenhuma implementação. Ver a seção *Capabilities e descoberta
    dinâmica*.
 
-9. **Workflow do Code Agent** — pipeline LangGraph fixa
-   (`initialize → discovery → planning → execution → validation → review`) que
-   consome capacidades do registry, com retry e interrupção. Ver a seção
-   *Workflow do Code Agent*. *(Legado; o caminho novo é a execução dinâmica.)*
+9. **Grupos e planners** — `Group` (many-to-many declarativo) e `Planner`
+   (`kind="planner"`, global ou especializado por grupo). O core só descobre,
+   registra e agrupa; a composição é do host/plugin. Ver *Grupos, planners e
+   escopos*.
 
 10. **Execução dinâmica** — `GraphBuilder`/`PlanExecutor` transformam um
     `ExecutionPlan` (produzido por um `Planner` plugin) em um grafo LangGraph
@@ -275,60 +274,76 @@ outro `Discoverer` para usar um mecanismo alternativo:
 core = build_core(discoverers=[MeuDiscoverer()])
 ```
 
-## Workflow do Code Agent
+## Grupos, planners e escopos
 
-O core traz a **infraestrutura de orquestração** (não um agente pronto). O
-grafo consome capacidades do registry e é montado por `WorkflowRuntime` em
-`core.agent.runtime` — o único módulo que importa LangGraph:
-
-```
-START → initialize → discovery → planning → execution → validation → review → (cond) → END
-```
-
-- **initialize** — reinicia o estado e emite `workflow.started`.
-- **discovery** — inventário de capabilities + execução dos `Discoverer`
-  registrados; sem discoverers, o contexto fica vazio e o run segue.
-- **planning** — usa o `LLMProvider` default do registry para gerar o plano.
-- **execution** — usa o LLM para executar cada task e informa as `Tool`
-  disponíveis no prompt (ainda sem tool-calling real).
-- **validation** — roda cada `Validator` registrado; sem validators, nada a
-  validar.
-- **review** — usa o LLM para aprovar/reprovar e decide se repete.
-
-`container.workflow` já vem montado por `build_core`:
+**Grupos** são áreas de domínio declarativas e many-to-many. Capabilities e
+plugins referenciam grupos por id; um item pode estar em vários grupos.
 
 ```python
-from core import build_core
+from core import Capability, Group, Plugin
 
-core = build_core()                 # zero plugins: monta, mas não roda sem LLM
-state = core.workflow.run(request="refatore este arquivo")
-print(state.status)                 # completed | failed
-print(state.review.approved)
-core.shutdown()
+
+class GitCommit(Capability):
+    kind = "tool"
+    groups = ("code", "version-control")
+    ...
+
+
+class GitPlugin(Plugin):
+    id = "code-agent-plugin-git"
+    groups = ("project",)                     # grupo explícito do plugin
+
+    def declare_groups(self):
+        return [Group(id="version-control", name="Version Control")]
+
+    def declare_capabilities(self):
+        return [GitCommit()]
 ```
 
-**Estado** (`WorkflowState`, Pydantic): `request`, `context`, `plan`,
-`current_task`, `completed_tasks`, `validations`, `review`, `errors`, `status`,
-`attempts`, `metadata`, `updated_at`.
+Consultas no registry: `groups()`, `group(id)`, `group_ids()`,
+`capabilities_in_group(id)`, `capability_descriptors_in_group(id)`,
+`plugin_ids_in_group(id)`, `plugin_groups(plugin_id)`. Dois plugins declarando o
+mesmo `group.id` levantam `DuplicateGroupError`.
 
-**Retry e interrupção**: `CoreConfig.workflow.max_attempts` limita as passagens
-de execução. O `review` encerra como `completed` quando aprova **e** as
-validações passam; caso contrário repete `execution` enquanto houver tentativas,
-ou encerra como `failed`.
-
-**Capability ausente**: `WorkflowContext.llm()` levanta `MissingCapabilityError`
-com mensagem explícita (ex.: sem `LLMProvider`). O runtime emite
-`workflow.failed` e propaga o erro.
-
-**Eventos**: `workflow.started`, `workflow.stage.started`,
-`workflow.stage.finished`, `workflow.retry`, `workflow.completed`,
-`workflow.failed`.
+**Planners** são capabilities (`kind="planner"`). Sem grupos = global; com grupos
+= especializado. O core **só descobre, registra e agrupa**:
 
 ```python
-from core import CoreConfig, build_core
+from core import ExecutionContext, Planner, PlanningRequest, PlanningResult
 
-config = CoreConfig.model_validate({"workflow": {"max_attempts": 3}})
-core = build_core(config=config)
+
+class CodePlanner(Planner):
+    groups = ("code",)
+
+    @property
+    def name(self) -> str:
+        return "code-planner"
+
+    def plan(self, request: PlanningRequest) -> PlanningResult:
+        ...   # devolve um ExecutionPlan; não conhece LangGraph
+```
+
+```python
+registry.planners()                      # todos os planners
+registry.planners(group="code")          # só os do grupo "code"
+registry.planner_descriptors(group="code")
+```
+
+O planner global recebe os **descriptors** dos especializados em
+`PlanningRequest.planners`; compor (main → grupo) é responsabilidade do
+host/plugin. O planner **não executa capabilities**: ele devolve um
+`ExecutionPlan`, e o `PlanExecutor` executa.
+
+**ComplexityEvaluator** (`kind="complexity"`) é só contrato: permite à
+aplicação/planner decidir entre execução direta, plano simples, grafo complexo ou
+estratégia iterativa — sem heurística no core.
+
+**InteractionProvider** (fornecido pelo host, nunca uma capability) chega aos
+plugins por `PluginContext.interaction` e às capabilities em execução por
+`NodeExecutionRequest.interaction`:
+
+```python
+core = build_core(interaction=meu_provider)
 ```
 
 ## Execução dinâmica (ExecutionPlan → LangGraph)
@@ -375,10 +390,6 @@ durante a execução viram `NodeResult.failed` observável.
 execução; **não há checkpoint persistente** ainda (a limitação é documentada, não
 simulada).
 
-> O workflow fixo (`initialize → discovery → planning → execution → validation →
-> review`) é legado e permanece por compatibilidade; o caminho novo é o plano
-> dinâmico acima.
-
 ## Como criar um plugin externo
 
 Um plugin é um pacote Python normal que importa **apenas a API pública** de
@@ -422,10 +433,11 @@ code-agent-plugin-meu = "meu_pacote.plugin:MeuPlugin"
 Instalado (`pip install -e .`), o plugin é descoberto automaticamente:
 
 ```python
-from core import build_core
+from core import ExecutionContext, ExecutionPlan, PlanNode, build_core
 
 core = build_core()                    # descobre por entry points
-core.workflow.run(request="...")
+plan = ExecutionPlan(id="p", nodes=(PlanNode(id="n", capability="tool:meu-tool"),))
+core.executor.run(plan, ExecutionContext(request="..."))
 core.shutdown()
 ```
 
