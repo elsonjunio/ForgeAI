@@ -7,6 +7,7 @@ from typing import Any
 
 from core.config.schema import CoreConfig
 from core.contracts.capability import Capability, CapabilityDescriptor
+from core.contracts.execution import Executable
 from core.contracts.group import Group
 from core.contracts.interaction import InteractionProvider
 from core.contracts.node import NodeContribution
@@ -238,6 +239,18 @@ class PluginRegistry:
         if group is not None:
             capabilities = [cap for cap in capabilities if group in cap.groups]
         return [capability.describe() for capability in capabilities]
+
+    def executable_capabilities(self) -> list[Capability]:
+        """Capabilities that can run as plan nodes (implement ``Executable``)."""
+        return [
+            capability
+            for capability in self._capabilities.values()
+            if isinstance(capability, Executable)
+        ]
+
+    def executable_capability_descriptors(self) -> list[CapabilityDescriptor]:
+        """Descriptors of the capabilities that can run as plan nodes."""
+        return [capability.describe() for capability in self.executable_capabilities()]
 
     # -- groups --------------------------------------------------------------
 

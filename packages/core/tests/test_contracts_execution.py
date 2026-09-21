@@ -33,7 +33,11 @@ from core import (
     build_core,
 )
 from core.contracts import plan as plan_module
-from tests.support.capabilities import CapabilityPlugin
+from tests.support.capabilities import (
+    CapabilityPlugin,
+    FakeLLMProvider,
+    FakeTool,
+)
 
 # --- 1. a planner can produce an ExecutionPlan ------------------------------
 
@@ -242,3 +246,19 @@ def test_registry_exposes_capability_descriptors() -> None:
 
     assert [descriptor.id for descriptor in descriptors] == ["tool:param"]
     assert descriptors[0].parameters["properties"] == {"x": {"type": "string"}}
+
+
+def test_executable_capabilities_filter() -> None:
+    tool = FakeTool("echo")
+    llm = FakeLLMProvider("llm")
+    core = build_core(
+        plugins=[CapabilityPlugin([tool, llm], plugin_id="caps")], discoverers=[]
+    )
+    try:
+        assert [cap.name for cap in core.registry.executable_capabilities()] == ["echo"]
+        assert [
+            descriptor.id
+            for descriptor in core.registry.executable_capability_descriptors()
+        ] == ["tool:echo"]
+    finally:
+        core.shutdown()

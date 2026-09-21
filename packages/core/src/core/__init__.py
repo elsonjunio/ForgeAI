@@ -65,7 +65,12 @@ from core.contracts.llm import (
 )
 from core.contracts.node import AgentNode, NodeContract, NodeContribution
 from core.contracts.plan import ExecutionPlan, PlanEdge, PlanNode
-from core.contracts.planning import Planner, PlanningRequest, PlanningResult
+from core.contracts.planning import (
+    Observation,
+    Planner,
+    PlanningRequest,
+    PlanningResult,
+)
 from core.contracts.plugin import PluginMetadata
 from core.contracts.registry import CapabilitySource
 from core.contracts.tool import Tool, ToolContract, ToolResult
@@ -164,6 +169,7 @@ __all__ = [
     "NodeExecutionRequest",
     "NodeResult",
     "NodeRunner",
+    "Observation",
     "PlanEdge",
     "PlanExecutor",
     "PlanNode",

@@ -45,7 +45,7 @@ Flags: `--config ARQ` (JSON), `--system TEXTO`, `--no-stream`, `--no-discover`,
 | `/config` | configuração resolvida |
 | `/interaction <msg>` | testa o `InteractionProvider` |
 | `/plan <request>` | planeja e mostra o `ExecutionPlan` |
-| `/run <request>` | planeja e executa (planner + executor) |
+| `/run <request>` | planeja, executa, observa e replaneja até concluir; mostra cada iteração |
 
 ## Desenvolvendo plugins com o CLI
 

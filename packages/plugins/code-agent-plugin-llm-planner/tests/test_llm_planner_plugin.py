@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from code_agent_plugin_llm_planner import LLMPlannerPlugin
@@ -16,6 +16,9 @@ from core import (
     Planner,
     PlanningRequest,
     Plugin,
+    Tool,
+    ToolContract,
+    ToolResult,
 )
 from core.plugins.registry import PluginRegistry
 
@@ -36,11 +39,20 @@ class _FakeLLM(LLMProvider):
         return LLMResponse(message=Message(role="assistant", content=content))
 
 
+class _EchoTool(Tool):
+    @property
+    def contract(self) -> ToolContract:
+        return ToolContract(name="echo", description="echo")
+
+    def invoke(self, arguments: Mapping[str, Any]) -> ToolResult:
+        return ToolResult(output="ok")
+
+
 class _ProviderPlugin(Plugin):
     id = "llm"
 
     def declare_capabilities(self) -> list[Capability]:
-        return [_FakeLLM()]
+        return [_FakeLLM(), _EchoTool()]
 
 
 def test_plugin_registers_planner() -> None:

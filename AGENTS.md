@@ -39,9 +39,10 @@ Monorepo — every project is an independent Python package with its own
     the dynamic plan executor.
   - `packages/core/examples/` — `hello_core.py`.
 - `packages/plugins/<plugin>/` — plugin packages (e.g.
-  `code-agent-plugin-opencode-go`, `code-agent-plugin-llm-planner`; see their
-  README). Plugin test dirs are **not** packages, so test file basenames must be
-  unique across the repo (e.g. `test_planner.py`, `test_llm_planner_plugin.py`).
+  `code-agent-plugin-opencode-go`, `code-agent-plugin-llm-planner`,
+  `code-agent-plugin-filesystem`; see their README). Plugin test dirs are **not**
+  packages, so test file basenames must be unique across the repo (e.g.
+  `test_planner.py`, `test_fs_tools.py`).
 - `apps/cli/` — the `forgeai-cli` package (chat REPL + plugin inspection).
 - `pyproject.toml` (repo root) — shared tooling only (ruff/mypy/pytest), **not**
   an installable package. Run `ruff check .`, `mypy`, `pytest` from the root.
@@ -113,12 +114,18 @@ Monorepo — every project is an independent Python package with its own
   **not** execute or emit); `NodeRunner` resolves capabilities via
   `CapabilitySource.capability`, executes through the `Executable` protocol (or
   the `Tool` adapter), handles retry/control and emits node events;
-  `PlanExecutor` orchestrates build + invoke + finalize. The core has
+  `PlanExecutor` orchestrates build + invoke + finalize. **Only `Executable`
+  capabilities can be plan nodes** — the host advertises only those to planners
+  via `executable_capability_descriptors()`. The core has
   **no fixed pipeline** and **no ReAct loop**: the graph is whatever the plan
   says. Validation runs before building (`InvalidPlanError`,
   `MissingCapabilityError`, `UnsupportedCapabilityError`). No automatic history
   and no memory. `PAUSE`/`INTERRUPT` stop the run; persistent checkpointing is
   not implemented.
+- **Iterative planning (host).** `PlanningResult.needs_more_info` plus
+  `PlanningRequest.observations` let a host run plan → execute → observe → replan
+  until the planner is done. The CLI does this in `/run` (bounded by
+  `_MAX_ITERATIONS`); the core itself still has no loop or tool-calling.
 - **Two runtimes.** `AgentRuntime` (`core/agent/runtime.py`) is the *generic node
   runtime* (plugin-contributed `NodeContribution`s over `AgentState`).
   `NodeRunner`/`PlanExecutor` (`core/agent/graph.py`) are the *plan runtime*

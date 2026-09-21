@@ -23,6 +23,27 @@ from core.contracts.execution import ExecutionContext
 from core.contracts.plan import ExecutionPlan
 
 
+class Observation(BaseModel):
+    """Information gathered by a previous plan/execute iteration.
+
+    The host accumulates these across iterations and feeds them back to the
+    planner, so a planner can decide whether it still needs more information.
+
+    Args:
+        node_id: the plan node that produced the observation.
+        capability: the capability id that ran, when known.
+        success: whether the node succeeded.
+        output: textual result (or error message when it failed).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    node_id: str
+    capability: str | None = None
+    success: bool = True
+    output: str = ""
+
+
 class PlanningRequest(BaseModel):
     """Input handed to a :class:`Planner`.
 
@@ -31,6 +52,7 @@ class PlanningRequest(BaseModel):
         context: the shared execution context (state, history, capabilities).
         group: the scope being planned (``None`` means global/whole request).
         planners: descriptors of the planners/groups available for planning.
+        observations: information gathered by previous iterations.
         metadata: free-form planning metadata.
 
     ``capabilities`` and ``history`` are exposed as read-only properties backed
@@ -43,6 +65,7 @@ class PlanningRequest(BaseModel):
     context: ExecutionContext
     group: str | None = None
     planners: tuple[CapabilityDescriptor, ...] = ()
+    observations: tuple[Observation, ...] = ()
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @property
@@ -62,6 +85,8 @@ class PlanningResult(BaseModel):
     Args:
         plan: the executable plan.
         rationale: optional explanation for the plan.
+        needs_more_info: when true, the plan gathers information for a next
+            planning iteration instead of completing the request.
         metadata: free-form data about the planning process.
     """
 
@@ -69,6 +94,7 @@ class PlanningResult(BaseModel):
 
     plan: ExecutionPlan
     rationale: str = ""
+    needs_more_info: bool = False
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

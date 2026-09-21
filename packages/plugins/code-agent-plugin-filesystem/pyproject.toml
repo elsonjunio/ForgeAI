@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "code-agent-plugin-filesystem"
+version = "0.1.0"
+description = "Filesystem tools (read/list/stat/write) plugin for core-agent."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "ForgeAI" }]
+dependencies = ["core-agent"]
+
+[project.entry-points."core_agent.plugins"]
+code-agent-plugin-filesystem = "code_agent_plugin_filesystem:FilesystemPlugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/code_agent_plugin_filesystem"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/code_agent_plugin_filesystem"]

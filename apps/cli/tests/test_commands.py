@@ -136,7 +136,7 @@ class _EchoTool(Tool):
         return ToolContract(name="echo", description="echo")
 
     def invoke(self, arguments: Mapping[str, Any]) -> ToolResult:
-        return ToolResult(output="ok")
+        return ToolResult(output="echo-output")
 
 
 class _RunFakesPlugin(Plugin):
@@ -154,5 +154,88 @@ def test_run_executes_plan_end_to_end() -> None:
         text = "\n".join(result.output)
         assert "status: completed" in text
         assert "n1: ok" in text
+        assert "echo-output" in text
+    finally:
+        core.shutdown()
+
+
+def test_format_node_output() -> None:
+    from forge_cli.commands import _format_node_output
+
+    assert _format_node_output(None) == []
+    assert _format_node_output("hello") == ["    hello"]
+
+    long_output = _format_node_output("\n".join(str(index) for index in range(100)))
+    assert any("truncated" in line for line in long_output)
+
+
+def test_context_advertises_only_executable_capabilities() -> None:
+    from forge_cli.commands import _context
+
+    core = build_core(plugins=[_RunFakesPlugin(), LLMPlannerPlugin()], discoverers=[])
+    try:
+        context = _context(core, "x")
+        assert sorted(descriptor.id for descriptor in context.capabilities) == [
+            "tool:echo"
+        ]
+    finally:
+        core.shutdown()
+
+
+class _ScriptedPlanLLM(LLMProvider):
+    def __init__(self, responses: list[str]) -> None:
+        self._responses = list(responses)
+        self._index = 0
+        self.prompts: list[str] = []
+
+    @property
+    def name(self) -> str:
+        return "scripted-plan"
+
+    def complete(
+        self,
+        messages: Sequence[Message],
+        *,
+        on_chunk: LLMChunkCallback | None = None,
+        **options: Any,
+    ) -> LLMResponse:
+        self.prompts.append(messages[-1].content if messages else "")
+        index = min(self._index, len(self._responses) - 1)
+        content = self._responses[index]
+        self._index += 1
+        return LLMResponse(message=Message(role="assistant", content=content))
+
+
+class _IterativePlugin(Plugin):
+    id = "iterative-fakes"
+
+    def __init__(self, llm: LLMProvider) -> None:
+        self._llm = llm
+
+    def declare_capabilities(self) -> list[Capability]:
+        return [self._llm, _EchoTool()]
+
+
+def test_run_iterates_until_planner_is_done() -> None:
+    llm = _ScriptedPlanLLM(
+        [
+            '{"needs_more_info": true, "nodes":[{"id":"list","capability":"tool:echo"}]}',
+            '{"needs_more_info": false, "nodes":[{"id":"read","capability":"tool:echo"}]}',
+        ]
+    )
+    core = build_core(
+        plugins=[_IterativePlugin(llm), LLMPlannerPlugin()], discoverers=[]
+    )
+    try:
+        result = handle_command("/run resuma os docs", core=core, session=None)
+        assert result is not None
+        text = "\n".join(result.output)
+        assert "[iteração 1]" in text
+        assert "[iteração 2]" in text
+        assert "list: ok" in text
+        assert "read: ok" in text
+        assert len(llm.prompts) == 2
+        assert "Information already gathered" in llm.prompts[1]
+        assert "echo-output" in llm.prompts[1]
     finally:
         core.shutdown()

@@ -523,6 +523,11 @@ registry.
 
 O plano não contém implementações concretas.
 
+Apenas capabilities **executáveis** (`Executable`) podem ser nodes. O host deve
+anunciar ao planner somente essas
+(`PluginRegistry.executable_capability_descriptors()`); o planner ainda valida os
+ids do plano e rejeita capabilities não executáveis (`LLMPlannerError`).
+
 ---
 
 # 13. GraphBuilder
@@ -804,6 +809,10 @@ da execução.
 
 O Core possui o contrato e adaptadores necessários para sua execução no Plan
 Runtime.
+
+`Tool` traz um `execute(request)` default que adapta `invoke` ao
+`NodeExecutionRequest`; tools que precisam de contexto (ex.: confirmação via
+`request.interaction`) sobrescrevem `execute`.
 
 O Core não possui tools concretas.
 
@@ -1273,16 +1282,14 @@ Não existe:
 
 ## 34.2 Ciclos e iteração
 
-Os planos atuais são DAGs.
+Os planos atuais são DAGs; o Core não interpreta ciclos.
 
-O Core não interpreta ciclos.
+Não existe um loop ReAct fixo nem tool-calling no Core.
 
-Não existe um loop ReAct fixo.
-
-Não existe um loop de agente implementado diretamente no Core.
-
-Uma estratégia que necessite de iteração deve produzir um plano compatível com
-o modelo atual ou implementar sua própria estratégia fora do Core.
+Iteração é responsabilidade do host/plugin: o `PlanningResult` traz
+`needs_more_info` e o host pode **replanejar** com as `Observation`s acumuladas
+(plan → execute → observe → replan) até o planner concluir. O CLI faz isso em
+`/run`, com um limite de iterações.
 
 ---
 
@@ -1667,8 +1674,11 @@ packages/
     ├── code-agent-plugin-opencode-go/
     │   ├── src/code_agent_plugin_opencode_go/
     │   └── tests/
-    └── code-agent-plugin-llm-planner/
-        ├── src/code_agent_plugin_llm_planner/
+    ├── code-agent-plugin-llm-planner/
+    │   ├── src/code_agent_plugin_llm_planner/
+    │   └── tests/
+    └── code-agent-plugin-filesystem/
+        ├── src/code_agent_plugin_filesystem/
         └── tests/
 
 apps/
@@ -1698,7 +1708,7 @@ scripts/build_packages.py
 
 O Core atualmente possui:
 
-* 178 testes unitários e de integração;
+* 199 testes unitários e de integração;
 * `ruff check .` limpo;
 * `mypy --strict` aplicado;
 * CI para Python 3.10–3.12;
@@ -1766,9 +1776,9 @@ mudanças de API e avaliadas com cuidado.
 As seguintes funcionalidades são extensões futuras e **não fazem parte do
 Core atual**:
 
-1. plugin de **tool** de exemplo (já existem plugins de **LLM** e **planner**:
-   `packages/plugins/code-agent-plugin-opencode-go` e
-   `code-agent-plugin-llm-planner`);
+1. plugins de exemplo (já existem **LLM**, **planner** e **filesystem**:
+   `packages/plugins/code-agent-plugin-opencode-go`,
+   `code-agent-plugin-llm-planner` e `code-agent-plugin-filesystem`);
 2. execução via planner/`PlanExecutor` no CLI (o chat já existe em
    `apps/cli`);
 3. tool calling;
