@@ -12,6 +12,7 @@ from core.events.types import EventHandler
 if TYPE_CHECKING:
     from core.contracts.capability import Capability
     from core.contracts.interaction import InteractionProvider
+    from core.contracts.registry import CapabilitySource
     from core.plugins.registry import PluginRegistry
 
 
@@ -48,6 +49,17 @@ class PluginContext:
         The core does not know how the host implements it (terminal, web, ...).
         """
         return self._interaction
+
+    @property
+    def capability_source(self) -> CapabilitySource:
+        """Read-only view of the registry, for resolving capabilities.
+
+        Plugins resolve providers by contract (e.g.
+        ``default_capability(LLMProvider)``) instead of importing concrete
+        implementations. The returned object is the registry, typed as the
+        read-only :class:`CapabilitySource` protocol.
+        """
+        return self._registry
 
     @property
     def config(self) -> PluginSlot:

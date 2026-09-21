@@ -9,6 +9,7 @@ depende de `core-agent` e declara um entry point no grupo `core_agent.plugins`
 | Pacote | Tipo | Descrição |
 |---|---|---|
 | [`code-agent-plugin-opencode-go`](code-agent-plugin-opencode-go/) | `LLMProvider` | API OpenCode Go (OpenAI-compatible) |
+| [`code-agent-plugin-llm-planner`](code-agent-plugin-llm-planner/) | `Planner` | gera `ExecutionPlan` via LLM |
 
 ## Criando um plugin
 

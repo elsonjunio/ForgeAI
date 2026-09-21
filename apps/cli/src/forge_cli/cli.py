@@ -162,7 +162,11 @@ def _run_repl(
             break
         if not line:
             continue
-        result = handle_command(line, core=core, session=session)
+        try:
+            result = handle_command(line, core=core, session=session)
+        except CoreError as exc:
+            print(f"erro ({type(exc).__name__}): {exc}")
+            continue
         if result is not None:
             for output in result.output:
                 print(output)

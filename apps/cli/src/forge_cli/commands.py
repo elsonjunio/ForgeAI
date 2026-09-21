@@ -1,8 +1,8 @@
 """Slash-command handling for the CLI.
 
-Commands are split into chat commands (need a session) and inspection commands
-(only need the core), so the CLI is usable for developing plugins even when no
-LLM provider is registered.
+Commands are split into chat commands (need a session) and inspection/execution
+commands (only need the core), so the CLI is usable for developing plugins even
+when no LLM provider is registered.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from core import (
     CoreContainer,
     ExecutionContext,
+    ExecutionPlan,
     InteractionRequest,
     Planner,
     PlanningRequest,
@@ -39,10 +40,12 @@ HELP = [
     "  /providers            lista LLM providers e o default",
     "  /config               mostra a configuração resolvida",
     "  /interaction <msg>    testa o InteractionProvider",
-    "  /plan <request>       planeja (requer um Planner registrado)",
+    "  /plan <request>       planeja e mostra o ExecutionPlan",
+    "  /run <request>        planeja e executa (planner + executor)",
 ]
 
 _NO_SESSION = "sem sessão (nenhum LLMProvider registrado)"
+_NO_PLANNER = "nenhum Planner registrado (instale um plugin de planner)"
 
 
 @dataclass
@@ -100,7 +103,21 @@ def handle_command(
         return CommandResult(_interaction(core, arg))
     if name == "plan":
         return CommandResult(_plan(core, arg))
+    if name == "run":
+        return CommandResult(_run(core, arg))
     return CommandResult([f"comando desconhecido: /{name} (use /help)"])
+
+
+def _context(core: CoreContainer, request: str) -> ExecutionContext:
+    return ExecutionContext(
+        request=request,
+        capabilities=tuple(core.registry.capability_descriptors()),
+    )
+
+
+def _planner(core: CoreContainer) -> Planner | None:
+    planner = core.registry.default_capability(Planner)
+    return planner if isinstance(planner, Planner) else None
 
 
 def _interaction(core: CoreContainer, message: str) -> list[str]:
@@ -117,18 +134,43 @@ def _interaction(core: CoreContainer, message: str) -> list[str]:
 
 
 def _plan(core: CoreContainer, request: str) -> list[str]:
-    planner = core.registry.default_capability(Planner)
-    if not isinstance(planner, Planner):
-        return ["nenhum Planner registrado (instale um plugin de planner)"]
-    context = ExecutionContext(request=request)
+    planner = _planner(core)
+    if planner is None:
+        return [_NO_PLANNER]
+    context = _context(core, request)
     planning = PlanningRequest(
         request=request,
         context=context,
         planners=tuple(core.registry.planner_descriptors()),
     )
-    result = planner.plan(planning)
-    lines = [f"plan {result.plan.id}: {len(result.plan.nodes)} node(s)"]
-    lines.extend(
-        f"  {node.id} -> {node.capability}" for node in result.plan.nodes
+    plan = planner.plan(planning).plan
+    return _describe_plan(plan)
+
+
+def _run(core: CoreContainer, request: str) -> list[str]:
+    planner = _planner(core)
+    if planner is None:
+        return [_NO_PLANNER]
+    context = _context(core, request)
+    planning = PlanningRequest(
+        request=request,
+        context=context,
+        planners=tuple(core.registry.planner_descriptors()),
     )
+    plan = planner.plan(planning).plan
+    execution = core.executor.run(plan, context)
+    lines = _describe_plan(plan)
+    lines.append(f"status: {execution.status}")
+    lines.extend(
+        f"  {node_id}: {'ok' if result.success else (result.error or 'failed')}"
+        for node_id, result in execution.results.items()
+    )
+    if execution.error:
+        lines.append(f"erro: {execution.error}")
+    return lines
+
+
+def _describe_plan(plan: ExecutionPlan) -> list[str]:
+    lines = [f"plan {plan.id}: {len(plan.nodes)} node(s)"]
+    lines.extend(f"  {node.id} -> {node.capability}" for node in plan.nodes)
     return lines
