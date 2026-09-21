@@ -14,6 +14,7 @@ import uuid
 
 from core import (
     CoreError,
+    Executable,
     ExecutionPlan,
     LLMProvider,
     Message,
@@ -28,11 +29,15 @@ _JSON_FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
 DEFAULT_MAX_NODES = 8
 
 _SYSTEM_PROMPT = (
-    "You are a planning component. Produce an execution plan as JSON with the "
-    'shape {"id": string, "nodes": [{"id": string, "capability": string, '
-    '"description": string, "parameters": object}], "edges": [{"source": '
-    'string, "target": string}]}. Use only capability ids from the provided '
-    "list. If none fits, return an empty nodes list. Return only JSON."
+    "You are a planning component for an iterative agent. Produce an execution "
+    'plan as JSON with the shape {"id": string, "needs_more_info": boolean, '
+    '"nodes": [{"id": string, "capability": string, "description": string, '
+    '"parameters": object}], "edges": [{"source": string, "target": string}]}. '
+    "Use only the executable capability ids from the provided list as node "
+    "capabilities (never the LLM or a planner). Set \"needs_more_info\": true "
+    "when the plan only gathers information needed for a later planning step; "
+    'set it false when the plan completes the user\'s request. If none fits, '
+    "return an empty nodes list. Return only JSON."
 )
 
 
@@ -78,10 +83,11 @@ class LLMPlanner(Planner):
                 Message(role="user", content=self._build_prompt(request)),
             ]
         )
-        plan = self._parse_plan(response.content)
+        plan, needs_more_info = self._parse_response(response.content)
         return PlanningResult(
             plan=plan,
             rationale=response.content.strip()[:500],
+            needs_more_info=needs_more_info,
             metadata={"provider": provider.name},
         )
 
@@ -103,13 +109,22 @@ class LLMPlanner(Planner):
             if capabilities
             else "(none)"
         )
+        if request.observations:
+            observed = "\n".join(
+                f"- {obs.node_id} ({obs.capability or '?'}): "
+                f"{obs.output[:500]}{'…' if len(obs.output) > 500 else ''}"
+                for obs in request.observations
+            )
+        else:
+            observed = "(none)"
         return (
             f"User request:\n{request.request}\n\n"
-            f"Available capabilities:\n{listing}\n\n"
+            f"Available executable capabilities:\n{listing}\n\n"
+            f"Information already gathered:\n{observed}\n\n"
             "Produce the JSON plan."
         )
 
-    def _parse_plan(self, content: str) -> ExecutionPlan:
+    def _parse_response(self, content: str) -> tuple[ExecutionPlan, bool]:
         raw = self._extract_json(content)
         if raw is None:
             raise LLMPlannerError("planner did not return JSON")
@@ -122,12 +137,29 @@ class LLMPlanner(Planner):
         nodes = data.get("nodes")
         if not isinstance(nodes, list):
             raise LLMPlannerError("plan JSON must contain a 'nodes' list")
+        needs_more_info = bool(data.pop("needs_more_info", False))
         data.setdefault("id", f"plan-{uuid.uuid4().hex[:8]}")
         data["nodes"] = nodes[: self._max_nodes]
         try:
-            return ExecutionPlan.model_validate(data)
+            plan = ExecutionPlan.model_validate(data)
         except Exception as exc:
             raise LLMPlannerError(f"invalid plan: {exc}") from exc
+        self._validate_executable(plan)
+        return plan, needs_more_info
+
+    def _validate_executable(self, plan: ExecutionPlan) -> None:
+        """Reject plans whose nodes do not reference executable capabilities."""
+        for node in plan.nodes:
+            capability_id = node.capability or ""
+            kind, separator, name = capability_id.partition(":")
+            capability = (
+                self._source.capability(kind, name) if separator and name else None
+            )
+            if not isinstance(capability, Executable):
+                raise LLMPlannerError(
+                    f"plan node {node.id!r} references non-executable capability "
+                    f"{capability_id!r}"
+                )
 
     @staticmethod
     def _extract_json(content: str) -> str | None:

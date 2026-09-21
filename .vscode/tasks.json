@@ -4,7 +4,7 @@
     {
       "label": "setup: criar venv + instalar",
       "type": "shell",
-      "command": "python3 -m venv .venv && .venv/bin/python -m pip install -e 'packages/core[dev]' -e 'apps/cli' -e 'packages/plugins/code-agent-plugin-opencode-go' -e 'packages/plugins/code-agent-plugin-llm-planner' 'httpx>=0.27'",
+      "command": "python3 -m venv .venv && .venv/bin/python -m pip install -e 'packages/core[dev]' -e 'apps/cli' -e 'packages/plugins/code-agent-plugin-opencode-go' -e 'packages/plugins/code-agent-plugin-llm-planner' -e 'packages/plugins/code-agent-plugin-filesystem' 'httpx>=0.27'",
       "options": { "cwd": "${workspaceFolder}" },
       "problemMatcher": []
     },

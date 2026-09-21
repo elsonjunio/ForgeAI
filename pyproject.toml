@@ -19,6 +19,8 @@ src = [
     "packages/plugins/code-agent-plugin-opencode-go/tests",
     "packages/plugins/code-agent-plugin-llm-planner/src",
     "packages/plugins/code-agent-plugin-llm-planner/tests",
+    "packages/plugins/code-agent-plugin-filesystem/src",
+    "packages/plugins/code-agent-plugin-filesystem/tests",
     "apps/cli/src",
     "apps/cli/tests",
 ]
@@ -35,6 +37,8 @@ files = [
     "packages/plugins/code-agent-plugin-opencode-go/tests",
     "packages/plugins/code-agent-plugin-llm-planner/src",
     "packages/plugins/code-agent-plugin-llm-planner/tests",
+    "packages/plugins/code-agent-plugin-filesystem/src",
+    "packages/plugins/code-agent-plugin-filesystem/tests",
     "apps/cli/src",
     "apps/cli/tests",
 ]
@@ -45,6 +49,7 @@ mypy_path = [
     "packages/core",
     "packages/plugins/code-agent-plugin-opencode-go/src",
     "packages/plugins/code-agent-plugin-llm-planner/src",
+    "packages/plugins/code-agent-plugin-filesystem/src",
     "apps/cli/src",
 ]
 exclude = ["packages/core/tests/support"]
@@ -54,6 +59,7 @@ testpaths = [
     "packages/core/tests",
     "packages/plugins/code-agent-plugin-opencode-go/tests",
     "packages/plugins/code-agent-plugin-llm-planner/tests",
+    "packages/plugins/code-agent-plugin-filesystem/tests",
     "apps/cli/tests",
 ]
 addopts = "-q"
@@ -61,6 +67,7 @@ pythonpath = [
     "packages/core/src",
     "packages/plugins/code-agent-plugin-opencode-go/src",
     "packages/plugins/code-agent-plugin-llm-planner/src",
+    "packages/plugins/code-agent-plugin-filesystem/src",
     "apps/cli/src",
 ]
 
@@ -69,5 +76,6 @@ source = [
     "packages/core/src/core",
     "packages/plugins/code-agent-plugin-opencode-go/src/code_agent_plugin_opencode_go",
     "packages/plugins/code-agent-plugin-llm-planner/src/code_agent_plugin_llm_planner",
+    "packages/plugins/code-agent-plugin-filesystem/src/code_agent_plugin_filesystem",
     "apps/cli/src/forge_cli",
 ]

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
-from core.contracts.capability import Capability
+from core.contracts.capability import Capability, CapabilityDescriptor
 
 
 @runtime_checkable
@@ -27,6 +27,14 @@ class CapabilitySource(Protocol):
 
     def default_capability(self, kind: type[Any]) -> Capability | None:
         """Return the default provider of ``kind``, if any."""
+        ...
+
+    def executable_capabilities(self) -> list[Capability]:
+        """Return the capabilities that can run as plan nodes (``Executable``)."""
+        ...
+
+    def executable_capability_descriptors(self) -> list[CapabilityDescriptor]:
+        """Descriptors of the capabilities that can run as plan nodes."""
         ...
 
     def capability_names(self, kind: type[Any] | str) -> list[str]:

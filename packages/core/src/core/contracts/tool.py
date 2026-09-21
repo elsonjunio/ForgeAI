@@ -16,6 +16,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from core.contracts.capability import Capability, CapabilityDescriptor
+from core.contracts.execution import NodeExecutionRequest, NodeResult
 
 
 class ToolContract(BaseModel):
@@ -82,3 +83,19 @@ class Tool(Capability):
     def invoke(self, arguments: Mapping[str, Any]) -> ToolResult:
         """Execute the tool with ``arguments`` and return its result."""
         raise NotImplementedError
+
+    def execute(self, request: NodeExecutionRequest) -> NodeResult:
+        """Adapt :meth:`invoke` to the execution request.
+
+        The default delegates to ``invoke`` with the node parameters. Tools that
+        need the execution context (for example to request confirmation via
+        ``request.interaction``) override this method.
+        """
+        result = self.invoke(request.node.parameters)
+        return NodeResult(
+            node_id=request.node.id,
+            success=not result.is_error,
+            output=result.output,
+            error=result.output if result.is_error else None,
+            metadata=dict(result.metadata),
+        )

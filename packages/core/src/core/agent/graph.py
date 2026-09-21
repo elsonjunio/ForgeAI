@@ -52,7 +52,6 @@ from core.contracts.execution import (
 from core.contracts.interaction import InteractionProvider
 from core.contracts.plan import ExecutionPlan, PlanNode
 from core.contracts.registry import CapabilitySource
-from core.contracts.tool import Tool
 from core.errors import (
     GraphBuildError,
     InvalidPlanError,
@@ -163,7 +162,7 @@ class NodeRunner:
     def validate_node(self, node: PlanNode) -> None:
         """Ensure ``node`` references a registered, executable capability."""
         capability = self.resolve_node(node)
-        if not isinstance(capability, Executable) and not isinstance(capability, Tool):
+        if not isinstance(capability, Executable):
             raise UnsupportedCapabilityError(
                 f"capability {node.capability!r} on node {node.id!r} "
                 "cannot run as a plan node"
@@ -249,16 +248,6 @@ class NodeRunner:
         try:
             if isinstance(capability, Executable):
                 return capability.execute(request)
-            if isinstance(capability, Tool):
-                tool_result = capability.invoke(dict(node.parameters))
-                error = tool_result.output if tool_result.is_error else None
-                return NodeResult(
-                    node_id=node.id,
-                    success=not tool_result.is_error,
-                    output=tool_result.output,
-                    error=error,
-                    metadata=dict(tool_result.metadata),
-                )
             raise UnsupportedCapabilityError(
                 f"capability {node.capability!r} on node {node.id!r} "
                 "cannot run as a plan node"
