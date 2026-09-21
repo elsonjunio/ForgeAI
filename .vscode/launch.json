@@ -11,8 +11,7 @@
       "python": "${workspaceFolder}/.venv/bin/python",
       "envFile": "${workspaceFolder}/.env",
       "env": {
-        "PYTHONPATH": "${workspaceFolder}/packages/core/src:${workspaceFolder}/apps/cli/src:${workspaceFolder}/packages/plugins/code-agent-plugin-opencode-go/src",
-        "OPENCODE_API_KEY": "oc_sk_eb30d9a21bc7__gJFbKtCETB3_npUEJRsv-5IAc3cuDHU"
+        "PYTHONPATH": "${workspaceFolder}/packages/core/src:${workspaceFolder}/apps/cli/src:${workspaceFolder}/packages/plugins/code-agent-plugin-opencode-go/src"
       }
     },
     {
@@ -30,8 +29,7 @@
       "python": "${workspaceFolder}/.venv/bin/python",
       "envFile": "${workspaceFolder}/.env",
       "env": {
-        "PYTHONPATH": "${workspaceFolder}/packages/core/src:${workspaceFolder}/apps/cli/src:${workspaceFolder}/packages/plugins/code-agent-plugin-opencode-go/src",
-        "OPENCODE_API_KEY": "oc_sk_eb30d9a21bc7__gJFbKtCETB3_npUEJRsv-5IAc3cuDHU"
+        "PYTHONPATH": "${workspaceFolder}/packages/core/src:${workspaceFolder}/apps/cli/src:${workspaceFolder}/packages/plugins/code-agent-plugin-opencode-go/src"
       }
     },
     {
