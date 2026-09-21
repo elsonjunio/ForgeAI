@@ -19,8 +19,8 @@ Este repositório é um monorepo: cada projeto é um pacote Python independente.
 
 ```
 packages/core/            core-agent   (contratos + runtime + orquestração)
-packages/plugins/<plugin> plugins      (ex.: code-agent-plugin-openai, ...)
-apps/cli/                 aplicação de linha de comando (entrypoint)
+packages/plugins/<plugin> plugins      (ex.: code-agent-plugin-opencode-go)
+apps/cli/                 forgeai-cli  (chat + inspeção de plugins)
 docs/                     guias
 scripts/build_packages.py empacotamento (wheel + sdist -> zip)
 pyproject.toml            tooling compartilhado (ruff/mypy/pytest), não é pacote

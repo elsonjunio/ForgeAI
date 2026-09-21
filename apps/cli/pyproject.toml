@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "forgeai-cli"
+version = "0.1.0"
+description = "ForgeAI command-line interface (chat + plugin inspection)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "ForgeAI" }]
+dependencies = ["core-agent"]
+
+[project.scripts]
+forgeai = "forge_cli.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/forge_cli"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/forge_cli"]

@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "code-agent-plugin-opencode-go"
+version = "0.1.0"
+description = "OpenCode Go LLM provider plugin for core-agent (OpenAI-compatible)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "ForgeAI" }]
+dependencies = [
+    "core-agent",
+    "httpx>=0.27",
+]
+
+[project.entry-points."core_agent.plugins"]
+code-agent-plugin-opencode-go = "code_agent_plugin_opencode_go:OpenCodeGoPlugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/code_agent_plugin_opencode_go"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/code_agent_plugin_opencode_go"]

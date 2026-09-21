@@ -38,8 +38,9 @@ Monorepo — every project is an independent Python package with its own
     only the public `core` API and is exercised through entry-point discovery and
     the dynamic plan executor.
   - `packages/core/examples/` — `hello_core.py`.
-- `packages/plugins/<plugin>/` — plugin packages (none yet; see its README).
-- `apps/cli/` — the CLI entrypoint package (placeholder for now).
+- `packages/plugins/<plugin>/` — plugin packages (e.g.
+  `code-agent-plugin-opencode-go`; see its README).
+- `apps/cli/` — the `forgeai-cli` package (chat REPL + plugin inspection).
 - `pyproject.toml` (repo root) — shared tooling only (ruff/mypy/pytest), **not**
   an installable package. Run `ruff check .`, `mypy`, `pytest` from the root.
 - `scripts/build_packages.py` — builds wheel+sdist and zips every package under

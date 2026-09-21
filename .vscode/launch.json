@@ -2,6 +2,39 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "CLI: forgeai (chat)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "forge_cli",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/packages/core/src:${workspaceFolder}/apps/cli/src:${workspaceFolder}/packages/plugins/code-agent-plugin-opencode-go/src",
+        "OPENCODE_API_KEY": "oc_sk_eb30d9a21bc7__gJFbKtCETB3_npUEJRsv-5IAc3cuDHU"
+      }
+    },
+    {
+      "name": "CLI: forgeai (plugin explícito)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "forge_cli",
+      "args": [
+        "--no-discover",
+        "--plugin",
+        "code_agent_plugin_opencode_go:OpenCodeGoPlugin"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/packages/core/src:${workspaceFolder}/apps/cli/src:${workspaceFolder}/packages/plugins/code-agent-plugin-opencode-go/src",
+        "OPENCODE_API_KEY": "oc_sk_eb30d9a21bc7__gJFbKtCETB3_npUEJRsv-5IAc3cuDHU"
+      }
+    },
+    {
       "name": "Python: exemplo core (F5)",
       "type": "debugpy",
       "request": "launch",
@@ -9,7 +42,9 @@
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "python": "${workspaceFolder}/.venv/bin/python",
-      "env": { "PYTHONPATH": "${workspaceFolder}/packages/core/src" }
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/packages/core/src"
+      }
     },
     {
       "name": "Python: arquivo atual",
@@ -19,14 +54,19 @@
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "python": "${workspaceFolder}/.venv/bin/python",
-      "env": { "PYTHONPATH": "${workspaceFolder}/packages/core/src" }
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/packages/core/src:${workspaceFolder}/apps/cli/src:${workspaceFolder}/packages/plugins/code-agent-plugin-opencode-go/src"
+      }
     },
     {
       "name": "pytest: arquivo atual",
       "type": "debugpy",
       "request": "launch",
       "module": "pytest",
-      "args": ["${file}", "-v"],
+      "args": [
+        "${file}",
+        "-v"
+      ],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "python": "${workspaceFolder}/.venv/bin/python",
