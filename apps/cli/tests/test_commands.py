@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
+from code_agent_plugin_llm_planner import LLMPlannerPlugin
 from core import (
     Capability,
     CoreContainer,
@@ -11,6 +12,9 @@ from core import (
     LLMResponse,
     Message,
     Plugin,
+    Tool,
+    ToolContract,
+    ToolResult,
     build_core,
 )
 from forge_cli.commands import handle_command
@@ -103,5 +107,52 @@ def test_plan_without_planner() -> None:
         result = handle_command("/plan fazer algo", core=core, session=None)
         assert result is not None
         assert any("Planner" in line for line in result.output)
+    finally:
+        core.shutdown()
+
+
+class _PlanLLM(LLMProvider):
+    @property
+    def name(self) -> str:
+        return "plan-llm"
+
+    def complete(
+        self,
+        messages: Sequence[Message],
+        *,
+        on_chunk: LLMChunkCallback | None = None,
+        **options: Any,
+    ) -> LLMResponse:
+        content = (
+            '{"nodes":[{"id":"n1","capability":"tool:echo",'
+            '"description":"echo"}],"edges":[]}'
+        )
+        return LLMResponse(message=Message(role="assistant", content=content))
+
+
+class _EchoTool(Tool):
+    @property
+    def contract(self) -> ToolContract:
+        return ToolContract(name="echo", description="echo")
+
+    def invoke(self, arguments: Mapping[str, Any]) -> ToolResult:
+        return ToolResult(output="ok")
+
+
+class _RunFakesPlugin(Plugin):
+    id = "run-fakes"
+
+    def declare_capabilities(self) -> list[Capability]:
+        return [_PlanLLM(), _EchoTool()]
+
+
+def test_run_executes_plan_end_to_end() -> None:
+    core = build_core(plugins=[_RunFakesPlugin(), LLMPlannerPlugin()], discoverers=[])
+    try:
+        result = handle_command("/run fazer algo", core=core, session=None)
+        assert result is not None
+        text = "\n".join(result.output)
+        assert "status: completed" in text
+        assert "n1: ok" in text
     finally:
         core.shutdown()

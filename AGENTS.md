@@ -39,7 +39,9 @@ Monorepo — every project is an independent Python package with its own
     the dynamic plan executor.
   - `packages/core/examples/` — `hello_core.py`.
 - `packages/plugins/<plugin>/` — plugin packages (e.g.
-  `code-agent-plugin-opencode-go`; see its README).
+  `code-agent-plugin-opencode-go`, `code-agent-plugin-llm-planner`; see their
+  README). Plugin test dirs are **not** packages, so test file basenames must be
+  unique across the repo (e.g. `test_planner.py`, `test_llm_planner_plugin.py`).
 - `apps/cli/` — the `forgeai-cli` package (chat REPL + plugin inspection).
 - `pyproject.toml` (repo root) — shared tooling only (ruff/mypy/pytest), **not**
   an installable package. Run `ruff check .`, `mypy`, `pytest` from the root.

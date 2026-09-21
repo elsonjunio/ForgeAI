@@ -44,7 +44,8 @@ Flags: `--config ARQ` (JSON), `--system TEXTO`, `--no-stream`, `--no-discover`,
 | `/providers` | LLM providers e default |
 | `/config` | configuração resolvida |
 | `/interaction <msg>` | testa o `InteractionProvider` |
-| `/plan <request>` | planeja (requer um `Planner`) |
+| `/plan <request>` | planeja e mostra o `ExecutionPlan` |
+| `/run <request>` | planeja e executa (planner + executor) |
 
 ## Desenvolvendo plugins com o CLI
 
@@ -57,7 +58,8 @@ forgeai --no-discover --plugin meu_pacote.plugin:MeuPlugin
 
 ## Limites
 
-- Chat usa apenas `LLMProvider.complete`; **não** passa por planner/`PlanExecutor`
-  ainda (`/plan` é placeholder até existir um `Planner`).
+- Chat usa apenas `LLMProvider.complete`. `/plan` e `/run` usam um `Planner`
+  (ex.: `code-agent-plugin-llm-planner`); sem tools instalados o plano tende a
+  ser vazio.
 - Histórico só na sessão (sem memória persistente); síncrono.
 - O CLI é **host**: não adiciona comportamento de domínio ao core.

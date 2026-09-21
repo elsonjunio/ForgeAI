@@ -1444,8 +1444,9 @@ Existe um CLI inicial (`apps/cli/`, distribuição `forgeai-cli`, comando
 (`/plugins`, `/capabilities`, `/groups`, `/planners`, `/providers`, `/config`).
 
 O chat usa apenas `LLMProvider.complete`; **não** passa por
-planner/`PlanExecutor` ainda (`/plan` é placeholder até existir um `Planner`). O
-CLI é host, não core.
+planner/`PlanExecutor` ainda. O CLI tem `/plan` (mostra o `ExecutionPlan`) e
+`/run` (planeja e executa via `PlanExecutor`), que exigem um plugin de planner
+(ex.: `code-agent-plugin-llm-planner`). O CLI é host, não core.
 
 ---
 
@@ -1663,8 +1664,11 @@ packages/
 packages/
 └── plugins/
     ├── README.md
-    └── code-agent-plugin-opencode-go/
-        ├── src/code_agent_plugin_opencode_go/
+    ├── code-agent-plugin-opencode-go/
+    │   ├── src/code_agent_plugin_opencode_go/
+    │   └── tests/
+    └── code-agent-plugin-llm-planner/
+        ├── src/code_agent_plugin_llm_planner/
         └── tests/
 
 apps/
@@ -1694,7 +1698,7 @@ scripts/build_packages.py
 
 O Core atualmente possui:
 
-* 170 testes unitários e de integração;
+* 178 testes unitários e de integração;
 * `ruff check .` limpo;
 * `mypy --strict` aplicado;
 * CI para Python 3.10–3.12;
@@ -1762,8 +1766,9 @@ mudanças de API e avaliadas com cuidado.
 As seguintes funcionalidades são extensões futuras e **não fazem parte do
 Core atual**:
 
-1. plugin de planner + tool de exemplo (já existe um plugin de **LLM**:
-   `packages/plugins/code-agent-plugin-opencode-go`);
+1. plugin de **tool** de exemplo (já existem plugins de **LLM** e **planner**:
+   `packages/plugins/code-agent-plugin-opencode-go` e
+   `code-agent-plugin-llm-planner`);
 2. execução via planner/`PlanExecutor` no CLI (o chat já existe em
    `apps/cli`);
 3. tool calling;

@@ -22,7 +22,9 @@
       "args": [
         "--no-discover",
         "--plugin",
-        "code_agent_plugin_opencode_go:OpenCodeGoPlugin"
+        "code_agent_plugin_opencode_go:OpenCodeGoPlugin",
+        "--plugin",
+        "code_agent_plugin_llm_planner:LLMPlannerPlugin"
       ],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
