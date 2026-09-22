@@ -17,6 +17,35 @@ def test_config_defaults() -> None:
     assert config.environment == "development"
     assert config.plugins == {}
     assert config.langgraph.recursion_limit == 25
+    assert config.budgets.max_iterations == 5
+    assert config.budgets.max_recoveries == 3
+    assert config.budgets.max_nodes is None
+    assert config.budgets.deadline_seconds is None
+    assert config.budgets.max_total_tokens is None
+
+
+def test_budgets_validate_bounds() -> None:
+    from pydantic import ValidationError
+
+    from core.config.schema import ExecutionBudgets
+
+    budgets = ExecutionBudgets(max_iterations=2, max_nodes=4, deadline_seconds=1.5)
+    assert budgets.max_iterations == 2
+    assert budgets.max_nodes == 4
+    assert budgets.deadline_seconds == 1.5
+
+    with pytest.raises(ValidationError):
+        ExecutionBudgets(max_iterations=0)
+    with pytest.raises(ValidationError):
+        ExecutionBudgets(max_recoveries=-1)
+    with pytest.raises(ValidationError):
+        ExecutionBudgets(deadline_seconds=0)
+
+
+def test_load_config_reads_budgets() -> None:
+    config = load_config({"budgets": {"max_iterations": 9, "max_nodes": 3}})
+    assert config.budgets.max_iterations == 9
+    assert config.budgets.max_nodes == 3
 
 
 def test_load_config_from_mapping() -> None:

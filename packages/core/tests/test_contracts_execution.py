@@ -22,7 +22,9 @@ from core import (
     LLMProvider,
     LLMResponse,
     Message,
+    NodeExecutionRequest,
     NodeResult,
+    Observation,
     Planner,
     PlanningRequest,
     PlanningResult,
@@ -262,3 +264,85 @@ def test_executable_capabilities_filter() -> None:
         ] == ["tool:echo"]
     finally:
         core.shutdown()
+
+
+# --- 9. recovery hints travel from tools to observations ---------------------
+
+
+class _RecoverableTool(Tool):
+    @property
+    def contract(self) -> ToolContract:
+        return ToolContract(name="recoverable", description="fails recoverably")
+
+    def invoke(self, arguments: Mapping[str, Any]) -> ToolResult:
+        return ToolResult(
+            output="FileNotFoundError: missing.txt",
+            is_error=True,
+            recoverable=True,
+        )
+
+
+def test_tool_result_recoverable_propagates_to_node_result() -> None:
+    request = NodeExecutionRequest(
+        node=PlanNode(id="n1", capability="tool:recoverable"),
+        context=ExecutionContext(request="x"),
+    )
+
+    result = _RecoverableTool().execute(request)
+
+    assert result.success is False
+    assert result.error == "FileNotFoundError: missing.txt"
+    assert result.recoverable is True
+
+
+def test_observation_defaults_and_parameters() -> None:
+    default = Observation(node_id="n1")
+    assert default.parameters == {}
+    assert default.role == "result"
+
+    carried = Observation(
+        node_id="n1",
+        capability="tool:fs.read_file",
+        success=False,
+        output="FileNotFoundError: missing.txt",
+        parameters={"path": "missing.txt"},
+    )
+    assert carried.parameters == {"path": "missing.txt"}
+
+
+def test_merge_usage_sums_and_ignores_missing() -> None:
+    from core import LLMUsage, merge_usage
+
+    assert merge_usage() is None
+    assert merge_usage(None, None) is None
+
+    first = LLMUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15)
+    second = LLMUsage(prompt_tokens=1, completion_tokens=None, total_tokens=1)
+
+    assert merge_usage(first, second, None) == LLMUsage(
+        prompt_tokens=11, completion_tokens=5, total_tokens=16
+    )
+
+
+def test_validation_input_defaults_and_whole_outcome() -> None:
+    from core import ValidationInput, ValidationResult
+
+    default = ValidationInput(request="do it")
+    assert default.success is True
+    assert default.observations == ()
+    assert default.checkpoint == ""
+    assert default.scratchpad == ""
+
+    carried = ValidationInput(
+        request="do it",
+        success=False,
+        observations=(Observation(node_id="n1", output="ok"),),
+        checkpoint="summary",
+        scratchpad="- tool:x -> ok",
+    )
+    assert carried.success is False
+    assert carried.observations[0].node_id == "n1"
+
+    result = ValidationResult(passed=False, messages=("faltou X",))
+    assert result.messages == ("faltou X",)
+    assert result.usage is None

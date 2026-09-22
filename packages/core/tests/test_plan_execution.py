@@ -397,3 +397,55 @@ def test_failing_capability_is_observable() -> None:
     assert result.results["a"].success is False
     assert "kaboom" in (result.results["a"].error or "")
     assert ExecutionEventKind.ERROR in [event.kind for event in observer.events]
+
+
+class _RecoverableStep(Capability):
+    kind = "step"
+
+    @property
+    def name(self) -> str:
+        return "recoverable"
+
+    def execute(self, request: NodeExecutionRequest) -> NodeResult:
+        return NodeResult.failed(
+            request.node.id, "FileNotFoundError: missing.txt", recoverable=True
+        )
+
+
+def test_recoverable_failure_is_flagged_on_execution() -> None:
+    executor = _make_executor([_RecoverableStep()])
+    plan = _plan("recoverable", [("a", "step:recoverable")])
+
+    result = executor.run(plan, _context())
+
+    assert result.status == "failed"
+    assert result.recoverable is True
+    assert result.results["a"].recoverable is True
+
+
+def test_fatal_failure_is_not_recoverable() -> None:
+    executor = _make_executor([_FailingStep()])
+    plan = _plan("fatal", [("a", "step:failing")])
+
+    result = executor.run(plan, _context())
+
+    assert result.status == "failed"
+    assert result.recoverable is False
+
+
+def test_build_core_forwards_observer_to_executor() -> None:
+    observer = _RecordingObserver()
+    core = build_core(
+        plugins=[CapabilityPlugin([_RecordingStep("a")], plugin_id="obs")],
+        discoverers=[],
+        observer=observer,
+    )
+    try:
+        core.executor.run(_plan("obs", [("a", "step:a")]), _context())
+    finally:
+        core.shutdown()
+
+    kinds = [event.kind for event in observer.events]
+    assert ExecutionEventKind.EXECUTION_START in kinds
+    assert ExecutionEventKind.NODE_START in kinds
+    assert ExecutionEventKind.NODE_COMPLETE in kinds

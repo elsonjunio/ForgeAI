@@ -88,6 +88,9 @@ class NodeResult:
         success: whether the node succeeded.
         output: generic output payload.
         error: error message when ``success`` is ``False``.
+        recoverable: when a failed node could succeed if the plan changes (for
+            example a missing path) rather than being fatal. Lets a host decide
+            whether replanning is worth attempting.
         metadata: free-form data (usage, paths, ...).
         started_at / finished_at: timestamps for duration/observability.
     """
@@ -96,6 +99,7 @@ class NodeResult:
     success: bool
     output: Any = None
     error: str | None = None
+    recoverable: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -113,9 +117,21 @@ class NodeResult:
         return cls(node_id=node_id, success=True, output=output, metadata=dict(metadata))
 
     @classmethod
-    def failed(cls, node_id: str, error: str, **metadata: Any) -> NodeResult:
-        """Build a failed result."""
-        return cls(node_id=node_id, success=False, error=error, metadata=dict(metadata))
+    def failed(
+        cls, node_id: str, error: str, *, recoverable: bool = False, **metadata: Any
+    ) -> NodeResult:
+        """Build a failed result.
+
+        ``recoverable=True`` marks a failure a different plan could avoid (for
+        example a path that does not exist), as opposed to a fatal one.
+        """
+        return cls(
+            node_id=node_id,
+            success=False,
+            error=error,
+            recoverable=recoverable,
+            metadata=dict(metadata),
+        )
 
 
 @dataclass(frozen=True)
@@ -160,6 +176,8 @@ class ExecutionResult:
         results: per-node results, keyed by node id.
         control: the control action that ended the run.
         error: human-readable error summary, when any.
+        recoverable: when ``status == "failed"``, whether the failing node was
+            flagged recoverable (a different plan could avoid it).
         metadata: free-form data for the host.
     """
 
@@ -168,4 +186,5 @@ class ExecutionResult:
     results: dict[str, NodeResult] = field(default_factory=dict)
     control: ExecutionControl = field(default_factory=ExecutionControl)
     error: str | None = None
+    recoverable: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)

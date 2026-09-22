@@ -24,6 +24,7 @@ from core.agent.graph import GraphBuilder, NodeRunner, PlanExecutor
 from core.config.schema import CoreConfig
 from core.contracts import plan as plan_module
 from core.contracts import planning as planning_module
+from core.contracts import synthesis as synthesis_module
 from core.contracts.callbacks import ExecutionEvent
 from core.contracts.capability import Capability
 from core.contracts.execution import (
@@ -34,6 +35,7 @@ from core.contracts.execution import (
 from core.contracts.group import Group
 from core.contracts.plan import ExecutionPlan, PlanNode
 from core.contracts.planning import Planner
+from core.contracts.synthesis import Synthesizer
 from core.events.bus import EventBus
 from core.plugins.base import Plugin
 from core.plugins.registry import PluginRegistry
@@ -57,6 +59,15 @@ def test_planner_is_not_graphbuilder_or_runtime() -> None:
 
 def test_planner_contract_has_no_execute() -> None:
     assert not hasattr(Planner, "execute")
+
+
+# --- Synthesizer is not the engine either -----------------------------------
+
+
+def test_synthesizer_contract_has_no_langgraph_or_execute() -> None:
+    assert "langgraph" not in inspect.getsource(synthesis_module)
+    assert not hasattr(Synthesizer, "execute")
+    assert Synthesizer.kind == "synthesizer"
 
 
 # --- ExecutionPlan does not depend on LangGraph -----------------------------

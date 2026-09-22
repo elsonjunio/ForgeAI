@@ -9,7 +9,7 @@ The public API is intentionally small and stable:
     - discovery:    Discoverer, EntryPointDiscoverer, discover_plugins
     - capabilities: Capability, CapabilityDescriptor, LLMProvider, Tool,
                     CodeAnalyzer, Validator, Discoverer, Planner,
-                    ComplexityEvaluator
+                    ComplexityEvaluator, Synthesizer
     - execution:    ExecutionPlan, PlanNode, PlanEdge, ExecutionContext,
                     NodeResult, ExecutionControl, callbacks, InteractionProvider
     - groups:       Group
@@ -26,7 +26,12 @@ from core.agent.graph import GraphBuilder, NodeRunner, PlanExecutor
 from core.agent.runtime import AgentRuntime
 from core.agent.state import AgentState, AgentStatus, Message
 from core.config.loader import load_config
-from core.config.schema import CoreConfig, LangGraphOptions, PluginSlot
+from core.config.schema import (
+    CoreConfig,
+    ExecutionBudgets,
+    LangGraphOptions,
+    PluginSlot,
+)
 from core.contracts.analyzer import AnalysisResult, CodeAnalyzer
 from core.contracts.callbacks import (
     ControlCallback,
@@ -62,10 +67,12 @@ from core.contracts.llm import (
     LLMProvider,
     LLMResponse,
     LLMUsage,
+    merge_usage,
 )
 from core.contracts.node import AgentNode, NodeContract, NodeContribution
 from core.contracts.plan import ExecutionPlan, PlanEdge, PlanNode
 from core.contracts.planning import (
+    CompactionRequest,
     Observation,
     Planner,
     PlanningRequest,
@@ -73,6 +80,12 @@ from core.contracts.planning import (
 )
 from core.contracts.plugin import PluginMetadata
 from core.contracts.registry import CapabilitySource
+from core.contracts.synthesis import (
+    Synthesis,
+    SynthesisMode,
+    SynthesisRequest,
+    Synthesizer,
+)
 from core.contracts.tool import Tool, ToolContract, ToolResult
 from core.contracts.validator import ValidationInput, ValidationResult, Validator
 from core.errors import (
@@ -120,6 +133,7 @@ __all__ = [
     "CapabilityError",
     "CapabilitySource",
     "CodeAnalyzer",
+    "CompactionRequest",
     "ComplexityAssessment",
     "ComplexityEvaluator",
     "ComplexityLevel",
@@ -139,6 +153,7 @@ __all__ = [
     "Event",
     "EventBus",
     "EventHandler",
+    "ExecutionBudgets",
     "ExecutionContext",
     "ExecutionControl",
     "ExecutionEvent",
@@ -183,6 +198,10 @@ __all__ = [
     "PluginRegistry",
     "PluginSlot",
     "Subscription",
+    "Synthesis",
+    "SynthesisMode",
+    "SynthesisRequest",
+    "Synthesizer",
     "Tool",
     "ToolContract",
     "ToolResult",
@@ -193,5 +212,6 @@ __all__ = [
     "build_core",
     "discover_plugins",
     "load_config",
+    "merge_usage",
     "__version__",
 ]

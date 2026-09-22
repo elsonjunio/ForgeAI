@@ -20,6 +20,58 @@ from core import (
 from core.contracts.interaction import InteractionProvider
 
 DEFAULT_MAX_READ_BYTES = 1_000_000
+_MAX_HINT_ENTRIES = 20
+
+# Path/shape errors a different plan (for example `fs.list_dir` first) can avoid.
+_RECOVERABLE_OS_ERRORS = (FileNotFoundError, NotADirectoryError, IsADirectoryError)
+
+
+def _closest_name(target: str, names: list[str]) -> str | None:
+    """Return a near match for ``target`` among ``names``, when there is one."""
+    lowered = target.lower()
+    for name in names:
+        if name.lower() == lowered:
+            return name
+    for name in names:
+        other = name.lower()
+        if other.startswith(lowered) or lowered.startswith(other):
+            return name
+    return None
+
+
+def _path_hint(path: Path) -> str:
+    """Describe what actually exists near ``path`` to guide the next plan."""
+    directory = path if path.is_dir() else path.parent
+    while not directory.exists() and directory != directory.parent:
+        directory = directory.parent
+    if not directory.is_dir():
+        return ""
+    try:
+        names = sorted(entry.name for entry in directory.iterdir())
+    except OSError:
+        return ""
+    listing = ", ".join(names[:_MAX_HINT_ENTRIES])
+    if len(names) > _MAX_HINT_ENTRIES:
+        listing += ", …"
+    hint = f"directory {str(directory)!r} contains: {listing or '(empty)'}"
+    suggestion = _closest_name(path.name, names)
+    if suggestion is not None:
+        hint += f"; did you mean {suggestion!r}?"
+    return hint
+
+
+def _failure_result(exc: OSError, *, path: Path | None = None) -> ToolResult:
+    """Convert an OS error into a failed ``ToolResult`` with a recovery hint."""
+    message = f"{type(exc).__name__}: {exc}"
+    if path is not None:
+        hint = _path_hint(path)
+        if hint:
+            message = f"{message}. {hint}"
+    return ToolResult(
+        output=message,
+        is_error=True,
+        recoverable=isinstance(exc, _RECOVERABLE_OS_ERRORS),
+    )
 
 
 class _FilesystemTool(Tool):
@@ -57,7 +109,11 @@ class ReadFileTool(_FilesystemTool):
     def contract(self) -> ToolContract:
         return ToolContract(
             name="fs.read_file",
-            description="Read a UTF-8 text file, optionally truncated.",
+            description=(
+                "Read a UTF-8 text file, optionally truncated. Verify the path "
+                "exists first (fs.stat) or discover it with fs.list_dir; never "
+                "read an invented path."
+            ),
             parameters={
                 "type": "object",
                 "properties": {
@@ -71,7 +127,10 @@ class ReadFileTool(_FilesystemTool):
     def invoke(self, arguments: Mapping[str, Any]) -> ToolResult:
         path = self._path(arguments)
         max_bytes = int(arguments.get("max_bytes", self._max_read_bytes))
-        text = path.read_text(encoding="utf-8", errors="replace")
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            return _failure_result(exc, path=path)
         truncated = len(text) > max_bytes
         if truncated:
             text = text[:max_bytes]
@@ -88,7 +147,10 @@ class ListDirTool(_FilesystemTool):
     def contract(self) -> ToolContract:
         return ToolContract(
             name="fs.list_dir",
-            description="List directory entries, sorted; directories end with '/'.",
+            description=(
+                "List directory entries, sorted; directories end with '/'. Use "
+                "fs.list_dir to discover real file names before reading or writing."
+            ),
             parameters={
                 "type": "object",
                 "properties": {
@@ -100,10 +162,13 @@ class ListDirTool(_FilesystemTool):
 
     def invoke(self, arguments: Mapping[str, Any]) -> ToolResult:
         path = self._path(arguments)
-        names = [
-            f"{entry.name}/" if entry.is_dir() else entry.name
-            for entry in sorted(path.iterdir(), key=lambda item: item.name)
-        ]
+        try:
+            names = [
+                f"{entry.name}/" if entry.is_dir() else entry.name
+                for entry in sorted(path.iterdir(), key=lambda item: item.name)
+            ]
+        except OSError as exc:
+            return _failure_result(exc, path=path)
         pattern = arguments.get("pattern")
         if pattern:
             names = [
@@ -124,7 +189,11 @@ class StatTool(_FilesystemTool):
     def contract(self) -> ToolContract:
         return ToolContract(
             name="fs.stat",
-            description="Report whether a path exists and its basic metadata.",
+            description=(
+                "Report whether a path exists and its basic metadata. Verify a "
+                "path (exists/is_file/is_dir) before reading it or writing into "
+                "its directory."
+            ),
             parameters={
                 "type": "object",
                 "properties": {"path": {"type": "string"}},
@@ -146,25 +215,55 @@ class StatTool(_FilesystemTool):
 
 
 class WriteFileTool(_FilesystemTool):
-    """Write a UTF-8 text file, asking for confirmation when required."""
+    """Write a UTF-8 text file, asking for confirmation when required.
+
+    Idempotent: writing identical content is a no-op, and ``dry_run`` reports
+    what would change without touching disk or asking for confirmation.
+    """
 
     @property
     def contract(self) -> ToolContract:
         return ToolContract(
             name="fs.write_file",
-            description="Write a UTF-8 text file (creates directories optionally).",
+            description=(
+                "Write a UTF-8 text file (creates directories optionally). "
+                "Confirm the target directory exists (fs.stat/fs.list_dir) before "
+                "writing; the resolved path is shown for confirmation. Writing "
+                "identical content is a no-op; use dry_run to preview."
+            ),
             parameters={
                 "type": "object",
                 "properties": {
                     "path": {"type": "string"},
                     "content": {"type": "string"},
                     "create_dirs": {"type": "boolean"},
+                    "dry_run": {
+                        "type": "boolean",
+                        "description": "Report the intended write without doing it.",
+                    },
                 },
                 "required": ["path", "content"],
             },
         )
 
     def execute(self, request: NodeExecutionRequest) -> NodeResult:
+        parameters = request.node.parameters
+        path = self._path(parameters)
+        content = str(parameters.get("content", ""))
+        if parameters.get("dry_run"):
+            return NodeResult.ok(
+                request.node.id,
+                output=self._dry_run_summary(path, content),
+                path=str(path),
+                dry_run=True,
+            )
+        if self._is_noop(path, content):
+            return NodeResult.ok(
+                request.node.id,
+                output=f"unchanged: {path}",
+                path=str(path),
+                skipped=True,
+            )
         if self._require_confirmation:
             provider = request.interaction or self._interaction
             if provider is None:
@@ -172,7 +271,6 @@ class WriteFileTool(_FilesystemTool):
                     request.node.id,
                     "write requires confirmation but no InteractionProvider is configured",
                 )
-            path = self._path(request.node.parameters)
             response = provider.request(
                 InteractionRequest(
                     kind="confirm",
@@ -184,12 +282,31 @@ class WriteFileTool(_FilesystemTool):
                 return NodeResult.failed(request.node.id, "write not approved")
         return super().execute(request)
 
+    def _is_noop(self, path: Path, content: str) -> bool:
+        if not path.is_file():
+            return False
+        try:
+            return path.read_text(encoding="utf-8", errors="replace") == content
+        except OSError:
+            return False
+
+    def _dry_run_summary(self, path: Path, content: str) -> str:
+        size = len(content.encode("utf-8"))
+        if path.is_file():
+            action = "update" if not self._is_noop(path, content) else "no-op"
+        else:
+            action = "create"
+        return f"dry-run: would {action} {path} ({size} bytes)"
+
     def invoke(self, arguments: Mapping[str, Any]) -> ToolResult:
         path = self._path(arguments)
         content = str(arguments.get("content", ""))
-        if arguments.get("create_dirs"):
-            path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        try:
+            if arguments.get("create_dirs"):
+                path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+        except OSError as exc:
+            return _failure_result(exc, path=path)
         return ToolResult(
             output=f"wrote {len(content.encode('utf-8'))} bytes to {path}",
             metadata={"path": str(path)},

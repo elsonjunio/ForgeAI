@@ -83,12 +83,12 @@ packages/core/src/core/
                 (runtime.py e graph.py são as únicas importações de LangGraph)
   contracts/    Capability, CapabilityDescriptor, CapabilitySource, Group,
                 LLMProvider, Tool, CodeAnalyzer, Validator, Discoverer, Planner,
-                ComplexityEvaluator, ExecutionPlan/PlanNode/PlanEdge,
+                ComplexityEvaluator, Synthesizer, ExecutionPlan/PlanNode/PlanEdge,
                 ExecutionContext, NodeResult, ExecutionControl, callbacks,
                 InteractionProvider, PluginMetadata, NodeContract, NodeContribution
   plugins/      Plugin, PluginContext, PluginRegistry, EntryPointDiscoverer
   events/       Event, EventBus, CoreEvents, EventHandler
-  config/       CoreConfig, LangGraphOptions, PluginSlot
+  config/       CoreConfig, ExecutionBudgets, LangGraphOptions, PluginSlot
   runtime/      build_core, CoreContainer  (composition root)
 packages/core/tests/    testes (inclui tests/integration com plugin externo)
 ```
@@ -121,7 +121,8 @@ packages/core/tests/    testes (inclui tests/integration com plugin externo)
    as contribuições (`collect_nodes`, `collect_tools`).
 
 6. **Configuração** — `CoreConfig` (app, ambiente, slots por plugin,
-   opções do grafo). Carregável de `None`, mapping ou arquivo JSON via
+   opções do grafo, `budgets` advisory). Carregável de `None`, mapping ou
+   arquivo JSON via
    `load_config`. Slots de plugins não listados ficam habilitados por padrão,
    mantendo o cenário zero-configuração funcional.
 
@@ -131,7 +132,8 @@ packages/core/tests/    testes (inclui tests/integration com plugin externo)
    `agent.node.finished`, `plugin.activated`, `plugin.deactivated`.
 
 8. **Capabilities e execução** — contratos puros (`Capability` + `LLMProvider`,
-   `Tool`, `CodeAnalyzer`, `Validator`, `Discoverer`, `Planner`) e modelos de
+   `Tool`, `CodeAnalyzer`, `Validator`, `Discoverer`, `Planner`,
+   `Synthesizer`) e modelos de
    execução/planejamento (`CapabilityDescriptor`, `ExecutionPlan`, `PlanNode`,
    `PlanEdge`, `ExecutionContext`, `NodeResult`, `ExecutionControl`, callbacks,
    `InteractionProvider`), implementados/produzidos por plugins. O
@@ -210,6 +212,7 @@ com implementação:
 | `Validator` | `validator` | validação pós-execução (`validate`) |
 | `Discoverer` | `discoverer` | descoberta de plugins (`discover`) |
 | `Planner` | `planner` | produz um `ExecutionPlan` a partir de `PlanningRequest` |
+| `Synthesizer` | `synthesizer` | sintetiza resposta final ou checkpoint a partir de `SynthesisRequest` (não entra em planos) |
 
 Além das capabilities, o core define modelos de execução/planejamento
 (`CapabilityDescriptor`, `ExecutionPlan`/`PlanNode`/`PlanEdge`,
@@ -340,6 +343,13 @@ host/plugin. O planner **não executa capabilities**: ele devolve um
 **ComplexityEvaluator** (`kind="complexity"`) é só contrato: permite à
 aplicação/planner decidir entre execução direta, plano simples, grafo complexo ou
 estratégia iterativa — sem heurística no core.
+
+**Synthesizer** (`kind="synthesizer"`) é só contrato e **não** é `Executable`:
+não entra em planos. Ele sintetiza (`mode="answer"`) ou comprime
+(`mode="compact"`) as `Observation`s anteriores em um checkpoint. O planner
+pede compactação via `PlanningResult.compaction`, mas quem resolve o
+`Synthesizer`, aplica a política e realimenta `PlanningRequest.checkpoint` é o
+host.
 
 **InteractionProvider** (fornecido pelo host, nunca uma capability) chega aos
 plugins por `PluginContext.interaction` e às capabilities em execução por

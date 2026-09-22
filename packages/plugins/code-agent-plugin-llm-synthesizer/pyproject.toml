@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "code-agent-plugin-llm-synthesizer"
+version = "0.1.0"
+description = "LLM-based synthesizer plugin for core-agent."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "ForgeAI" }]
+dependencies = ["core-agent"]
+
+[project.entry-points."core_agent.plugins"]
+code-agent-plugin-llm-synthesizer = "code_agent_plugin_llm_synthesizer:LLMSynthesizerPlugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/code_agent_plugin_llm_synthesizer"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/code_agent_plugin_llm_synthesizer"]

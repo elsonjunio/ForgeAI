@@ -40,7 +40,9 @@ Monorepo — every project is an independent Python package with its own
   - `packages/core/examples/` — `hello_core.py`.
 - `packages/plugins/<plugin>/` — plugin packages (e.g.
   `code-agent-plugin-opencode-go`, `code-agent-plugin-llm-planner`,
-  `code-agent-plugin-filesystem`; see their README). Plugin test dirs are **not**
+  `code-agent-plugin-llm-synthesizer`, `code-agent-plugin-llm-validator`,
+  `code-agent-plugin-filesystem`; see their
+  README). Plugin test dirs are **not**
   packages, so test file basenames must be unique across the repo (e.g.
   `test_planner.py`, `test_fs_tools.py`).
 - `apps/cli/` — the `forgeai-cli` package (chat REPL + plugin inspection).
@@ -61,7 +63,8 @@ Monorepo — every project is an independent Python package with its own
   `langchain_core`. Plugins, contracts and every other module work with plain
   models and must never touch `StateGraph`.
 - **Provider-neutral core.** `LLMProvider`, `Tool`, `CodeAnalyzer`, `Validator`,
-  `Discoverer`, `Planner` and `ComplexityEvaluator` are contracts only
+  `Discoverer`, `Planner`, `ComplexityEvaluator` and `Synthesizer` are contracts
+  only
   (`core/contracts/`) — the core ships no implementation and never executes a
   tool. Execution/planning models
   (`CapabilityDescriptor`, `ExecutionPlan`/`PlanNode`/`PlanEdge`,
@@ -126,6 +129,33 @@ Monorepo — every project is an independent Python package with its own
   `PlanningRequest.observations` let a host run plan → execute → observe → replan
   until the planner is done. The CLI does this in `/run` (bounded by
   `_MAX_ITERATIONS`); the core itself still has no loop or tool-calling.
+  `PlanningResult.compaction` (`CompactionRequest`) is a typed request for the
+  host to fold accumulated observations into a `Synthesizer` checkpoint
+  (`mode="compact"`); the host feeds it back via `PlanningRequest.checkpoint`
+  and keeps `keep_last` recent observations verbatim. The core defines the
+  mechanism only — no compaction policy and no concrete synthesizer.
+  A failed node stops the plan, but `NodeResult.recoverable` /
+  `ExecutionResult.recoverable` (propagated from `ToolResult.recoverable`) tell
+  the host whether replanning is worth attempting; the CLI does this in `/run`,
+  bounded by `_MAX_RECOVERIES` and a no-progress guard on the failure signature
+  (`capability` + `parameters` + error, carried in `Observation.parameters`).
+  Planning/build errors (`InvalidPlanError`, `LLMPlannerError`, ...) are
+  discarded the same way: the error (plus a rejected-plan extract) becomes a
+  synthetic `plan` observation and the planner replans with the accumulated
+  observations/checkpoint preserved.
+- **Budgets, usage and progress (host).** `CoreConfig.budgets`
+  (`ExecutionBudgets`) carries *advisory* limits a host applies to a long run
+  (`max_iterations`, `max_recoveries`, `max_nodes`, `deadline_seconds`,
+  `max_total_tokens`, `compaction_chars`, `compaction_keep_last`,
+  `history_limit`); the core never reads them. `PlanningRequest.max_nodes` and
+  `.scratchpad` let the host cap a plan and carry deterministic progress.
+  `PlanningResult.usage`/`Synthesis.usage` carry `LLMUsage`, aggregated by the
+  host via `merge_usage`. `build_core(observer=...)` wires an
+  `ExecutionObserver` into the `PlanExecutor` for live progress. `Validator`
+  runs on the **whole outcome** (host-invoked at the end, never as a plan node):
+  `ValidationInput` carries the observations/checkpoint/scratchpad and
+  `ValidationResult.usage` the tokens; the CLI feeds failures back to the
+  planner.
 - **Two runtimes.** `AgentRuntime` (`core/agent/runtime.py`) is the *generic node
   runtime* (plugin-contributed `NodeContribution`s over `AgentState`).
   `NodeRunner`/`PlanExecutor` (`core/agent/graph.py`) are the *plan runtime*
@@ -157,7 +187,9 @@ Monorepo — every project is an independent Python package with its own
   (`PAUSE`/`INTERRUPT` only stop the run), plans are DAGs (no cycles), the plan
   execution state is a shared mutable object, `PlanExecutor.run` is sync (no
   `arun`), the LLM contract has no tool-calls and there is no tool-calling loop,
-  no memory/RAG, and `CapabilityDescriptor.constraints` is descriptive only. The
+  no memory/RAG, no concrete synthesizer and no core compaction policy (the CLI
+  applies one from `budgets`), and
+  `CapabilityDescriptor.constraints` is descriptive only. The
   canonical list is in `docs/architecture.md`.
 
 ## Docs

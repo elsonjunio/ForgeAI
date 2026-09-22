@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import os
 
-from code_agent_plugin_opencode_go.provider import DEFAULT_BASE_URL, OpenCodeGoLLM
+from code_agent_plugin_opencode_go.provider import (
+    DEFAULT_BASE_URL,
+    DEFAULT_MAX_RETRIES,
+    DEFAULT_RETRY_BASE_SECONDS,
+    DEFAULT_RETRY_MAX_SECONDS,
+    OpenCodeGoLLM,
+)
 from core import Capability, Plugin, PluginContext
 
 PLUGIN_ID = "code-agent-plugin-opencode-go"
@@ -20,6 +26,9 @@ class OpenCodeGoPlugin(Plugin):
     * ``api_key`` (default ``$OPENCODE_API_KEY``)
     * ``base_url`` (default ``https://opencode.ai/zen/go/v1``)
     * ``timeout`` (default ``60``)
+    * ``max_retries`` (default ``2``) — transient failures (timeout/429/5xx)
+    * ``retry_base_seconds`` (default ``0.5``)
+    * ``retry_max_seconds`` (default ``8``)
     * ``session_id`` (default: generated per process)
     * ``reasoning_effort`` (optional: ``low``/``high``/``max``)
     """
@@ -41,6 +50,13 @@ class OpenCodeGoPlugin(Plugin):
             ),
             base_url=context.get_setting("base_url", DEFAULT_BASE_URL),
             timeout=float(context.get_setting("timeout", 60.0)),
+            max_retries=int(context.get_setting("max_retries", DEFAULT_MAX_RETRIES)),
+            retry_base_seconds=float(
+                context.get_setting("retry_base_seconds", DEFAULT_RETRY_BASE_SECONDS)
+            ),
+            retry_max_seconds=float(
+                context.get_setting("retry_max_seconds", DEFAULT_RETRY_MAX_SECONDS)
+            ),
             session_id=context.get_setting("session_id"),
             reasoning_effort=context.get_setting("reasoning_effort"),
         )

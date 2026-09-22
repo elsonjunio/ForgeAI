@@ -432,6 +432,26 @@ execução.
 Isso permite que um planner seja reutilizado com diferentes mecanismos de
 execução ou testado isoladamente.
 
+### Synthesizer e compactação
+
+`Synthesizer` é outro contrato do Core (`kind="synthesizer"`), sem
+implementação concreta. Ele **não** é `Executable`: não entra em planos e não é
+resolvido por `executable_capability_descriptors()`.
+
+Ele cobre dois papéis:
+
+* **síntese final** (`SynthesisRequest.mode="answer"`): transformar as
+  `Observation`s acumuladas na resposta apresentada ao usuário;
+* **compactação/checkpoint** (`mode="compact"`): resumir as observações
+  anteriores em um `checkpoint`.
+
+O planner pode **pedir** compactação — sem executá-la — via
+`PlanningResult.compaction`; `CompactionRequest.keep_last` define quantas
+observações recentes ficam fora do checkpoint. O host é quem resolve o
+`Synthesizer` pelo registry, chama `synthesize(...)` e realimenta
+`PlanningRequest.checkpoint` na iteração seguinte. O Core não guarda estado,
+não aplica a política e não executa o sintetizador.
+
 ---
 
 # 10. Planners especializados
@@ -1025,6 +1045,12 @@ A configuração pode ser carregada a partir de:
 * mapping;
 * arquivo JSON.
 
+`CoreConfig` também carrega `budgets` (`ExecutionBudgets`): limites
+**advisory** que um host aplica a um pedido longo (`max_iterations`,
+`max_recoveries`, `max_nodes`, `deadline_seconds`, `max_total_tokens`,
+`compaction_chars`, `compaction_keep_last`, `history_limit`). O Core não lê
+esses valores; apenas os transporta para o host.
+
 Atualmente não existe suporte nativo a:
 
 * TOML;
@@ -1291,6 +1317,13 @@ Iteração é responsabilidade do host/plugin: o `PlanningResult` traz
 (plan → execute → observe → replan) até o planner concluir. O CLI faz isso em
 `/run`, com um limite de iterações.
 
+O host também pode compactar o histórico acumulado: o planner sinaliza
+`PlanningResult.compaction` (`CompactionRequest`), o host chama um
+`Synthesizer` em `mode="compact"` e passa a enviar, nas próximas iterações,
+apenas `PlanningRequest.checkpoint` + as observações mais recentes. O Core
+define o mecanismo tipado; a política (limiar, `keep_last`, quando compactar)
+continua sendo do host.
+
 ---
 
 ## 34.3 Paralelismo
@@ -1318,12 +1351,29 @@ Nodes que já foram concluídos permanecem representados nos resultados.
 
 Isso inclui nodes concluídos em branches anteriores.
 
-Não existe atualmente uma política geral de:
+A falha carrega um **hint de recuperabilidade**: `NodeResult.recoverable`
+(propagado de `ToolResult.recoverable`) indica se um plano diferente poderia
+evitá-la (ex.: caminho inexistente) em vez de ser fatal. `ExecutionResult`
+expõe o mesmo flag. É só uma dica descritiva: o Core continua interrompendo o
+grafo e não decide nada.
+
+Não existe uma política geral (no Core) de:
 
 * compensação;
 * rollback;
 * retomada;
 * execução parcial recuperável.
+
+O host pode usar o flag para **replanejar com o erro observado**, como faz o CLI
+em `/run`: ele captura a assinatura da falha (`capability` + `parameters` +
+erro), reenvia ao planner e limita as tentativas, parando em falha não
+recuperável, orçamento esgotado ou repetição da mesma falha.
+
+O mesmo tratamento vale para **erros de plano**: um `InvalidPlanError` (ou
+`LLMPlannerError`, `MissingCapabilityError`, `GraphBuildError`) levantado antes
+da execução não aborta o host — o plano é descartado, o erro (com um extrato do
+plano rejeitado) vira uma `Observation` e o planner replaneja **preservando o
+histórico acumulado**.
 
 ---
 
@@ -1429,18 +1479,18 @@ não fornece:
 
 ## 34.12 Tracing, tokens e custo
 
-Não existe tracing distribuído.
+Não existe tracing distribuído nem contabilização de **custo**.
 
-Não existe contabilização própria de:
+`LLMUsage` fornecido pelo provider é transportado pelo Core. O planner e o
+synthesizer o expõem em `PlanningResult.usage` / `Synthesis.usage`; o host
+agrega por run (`merge_usage`) e aplica `budgets.max_total_tokens`.
 
-* tokens;
-* custo;
-* latência por provider;
-* custo por node;
-* custo por execução.
+Ainda **não** há:
 
-`LLMUsage` e metadata fornecidos pelo provider podem ser transportados, mas não
-há agregação/política de custos implementada pelo Core.
+* tracing distribuído;
+* custo por provider (preço × tokens);
+* latência por provider/node;
+* agregação de custo por execução.
 
 ---
 
@@ -1453,7 +1503,24 @@ Existe um CLI inicial (`apps/cli/`, distribuição `forgeai-cli`, comando
 O chat usa apenas `LLMProvider.complete`; **não** passa por
 planner/`PlanExecutor` ainda. O CLI tem `/plan` (mostra o `ExecutionPlan`) e
 `/run` (planeja e executa via `PlanExecutor`), que exigem um plugin de planner
-(ex.: `code-agent-plugin-llm-planner`). O CLI é host, não core.
+(ex.: `code-agent-plugin-llm-planner`). Com um plugin de synthesizer (ex.:
+`code-agent-plugin-llm-synthesizer`), `/run` também aplica a compactação pedida
+pelo planner e sintetiza a resposta final. Com um plugin de validator (ex.:
+`code-agent-plugin-llm-validator`), o `/run` verifica o desfecho antes de
+responder.
+
+O `/run` é um host completo: aplica `CoreConfig.budgets` (iterações,
+recuperações, `max_nodes`, prazo, tokens, limiar de compactação, histórico),
+injeta o histórico da sessão no `PlanningRequest`, mantém um **scratchpad**
+determinístico para sobreviver à compactação, agrega `LLMUsage` e imprime o uso.
+Com um `ExecutionObserver` anexado via `build_core(observer=...)`, exibe
+progresso por node em tempo real.
+
+No **desfecho** (plano concluído, com `needs_more_info=False`) o `/run` executa
+os `Validator` registrados sobre o conjunto (observações/checkpoint/scratchpad).
+Se algum reprovar, as mensagens viram observação de falha e o planner replaneja
+(mesmo orçamento/guard); só após a aprovação a resposta final é sintetizada.
+O CLI é host, não core.
 
 ---
 
@@ -1473,7 +1540,12 @@ histórico selecionado
 nova ExecutionContext
 ```
 
-Não existe política automática de retenção ou compactação.
+O Core não tem política de retenção/compactação: só o mecanismo tipado
+(`Synthesizer`, `SynthesisRequest`, `CompactionRequest`,
+`PlanningRequest.checkpoint`/`scratchpad`). Quem decide o que reter ou
+compactar, e quando, é o host — o CLI faz isso com `budgets.compaction_chars`,
+`budgets.compaction_keep_last` e `budgets.history_limit` (injetando o histórico
+da sessão em `ExecutionContext.history`).
 
 ---
 
@@ -1494,6 +1566,7 @@ Não existe suporte nativo a TOML/YAML.
 As seguintes propriedades são protegidas por testes arquiteturais:
 
 * `Planner` não importa LangGraph.
+* `Synthesizer` não importa LangGraph e não é `Executable`.
 * `ExecutionPlan` não importa LangGraph.
 * `core.contracts` não importa LangGraph/LangChain.
 * LangGraph só é importado por `core/agent/runtime.py` e
@@ -1509,6 +1582,7 @@ As seguintes propriedades são protegidas por testes arquiteturais:
 * Não existe Memory concreta no Core.
 * Não existe CLI no Core.
 * Não existe planner concreto no Core.
+* Não existe sintetizador concreto no Core.
 * Não existe LLM provider concreto no Core.
 * Não existe tool concreta no Core.
 * O Core pode ser construído sem plugins.
@@ -1677,6 +1751,12 @@ packages/
     ├── code-agent-plugin-llm-planner/
     │   ├── src/code_agent_plugin_llm_planner/
     │   └── tests/
+    ├── code-agent-plugin-llm-synthesizer/
+    │   ├── src/code_agent_plugin_llm_synthesizer/
+    │   └── tests/
+    ├── code-agent-plugin-llm-validator/
+    │   ├── src/code_agent_plugin_llm_validator/
+    │   └── tests/
     └── code-agent-plugin-filesystem/
         ├── src/code_agent_plugin_filesystem/
         └── tests/
@@ -1762,7 +1842,7 @@ v0.1.0
 # 42. API pública
 
 O pacote atualmente expõe uma facade pública relativamente ampla, com
-aproximadamente 85 nomes exportados.
+aproximadamente 95 nomes exportados.
 
 A API pode ser enxugada em versões futuras.
 
@@ -1776,9 +1856,12 @@ mudanças de API e avaliadas com cuidado.
 As seguintes funcionalidades são extensões futuras e **não fazem parte do
 Core atual**:
 
-1. plugins de exemplo (já existem **LLM**, **planner** e **filesystem**:
+1. plugins de exemplo (já existem **LLM**, **planner**, **synthesizer**,
+   **validator** e **filesystem**:
    `packages/plugins/code-agent-plugin-opencode-go`,
-   `code-agent-plugin-llm-planner` e `code-agent-plugin-filesystem`);
+   `code-agent-plugin-llm-planner`, `code-agent-plugin-llm-synthesizer`,
+   `code-agent-plugin-llm-validator` e
+   `code-agent-plugin-filesystem`);
 2. execução via planner/`PlanExecutor` no CLI (o chat já existe em
    `apps/cli`);
 3. tool calling;
@@ -1786,7 +1869,8 @@ Core atual**:
 5. sandbox;
 6. permissões;
 7. memória;
-8. checkpoint;
+8. checkpoint persistente (o contrato de *compactação* existe:
+   `Synthesizer`/`CompactionRequest`; persistência e resume não);
 9. resume;
 10. tracing;
 11. contabilização de tokens/custos;

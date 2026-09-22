@@ -25,7 +25,8 @@ Precisa de um plugin de LLM (ex.: `code-agent-plugin-opencode-go`).
   "nodes": [
     {"id": "n1", "capability": "tool:read_file", "description": "...", "parameters": {"path": "a.py"}}
   ],
-  "edges": [{"source": "n1", "target": "n2"}]
+  "edges": [{"source": "n1", "target": "n2"}],
+  "compaction": {"keep_last": 0}
 }
 ```
 
@@ -33,10 +34,28 @@ Precisa de um plugin de LLM (ex.: `code-agent-plugin-opencode-go`).
   volta a planejar com as `Observation`s acumuladas (plan → execute → observe →
   replan), até `needs_more_info: false`.
 - `needs_more_info: false` (default) → o plano conclui o pedido.
-- O prompt inclui as observações anteriores em "Information already gathered".
+- `compaction` (opcional) → pede ao host para resumir as observações acumuladas
+  em um **checkpoint** via um `Synthesizer` (`mode="compact"`). `keep_last` mantém
+  as N observações mais recentes cruas (`0` resume tudo). Só faz sentido quando o
+  prompt lista synthesizers disponíveis; o host decide se aplica.
+- O prompt inclui as observações anteriores em "Information already gathered", o
+  checkpoint anterior em "Previous checkpoint", os synthesizers disponíveis em
+  "Available synthesizers", o progresso determinístico em "Progress so far" e o
+  histórico da conversa em "Conversation history".
+- `request.max_nodes` (do host) sobrepõe o `max_nodes` do plugin.
+- O `PlanningResult.usage` carrega o consumo de tokens da chamada.
+- O prompt inclui também o **Execution context** (ex.: `working_directory`
+  fornecido pelo host) para evitar caminhos inventados.
+- **Política de verificação**: o planner é instruído a não assumir caminhos —
+  confirmar com `fs.stat`/`fs.list_dir` (com edge antes da ação) antes de
+  ler/escrever, nunca inventar nomes, e não repetir um comando que falhou.
 - Só ids de capability listados são válidos; se nenhum servir, `"nodes": []`.
 - Aceita JSON puro ou cercado por ```` ```json ````.
-- `max_nodes` limita a quantidade de nodes.
+- `max_nodes` limita a quantidade de nodes; planos acima do limite são
+  **rejeitados** (`LLMPlannerError`), não truncados.
+- As edges devem referenciar ids declarados em `nodes`, sem self-loop; o plano
+  é rejeitado com `LLMPlannerError` se a estrutura for inválida. O host descarta
+  o plano e replaneja com o erro (sem perder o histórico).
 
 ## Settings
 
