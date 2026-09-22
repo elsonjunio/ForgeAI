@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "code-agent-plugin-llm-validator"
+version = "0.1.0"
+description = "LLM-based outcome validator plugin for core-agent."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "ForgeAI" }]
+dependencies = ["core-agent"]
+
+[project.entry-points."core_agent.plugins"]
+code-agent-plugin-llm-validator = "code_agent_plugin_llm_validator:LLMValidatorPlugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/code_agent_plugin_llm_validator"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/code_agent_plugin_llm_validator"]

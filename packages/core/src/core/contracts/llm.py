@@ -29,6 +29,31 @@ class LLMUsage:
     total_tokens: int | None = None
 
 
+def merge_usage(*usages: LLMUsage | None) -> LLMUsage | None:
+    """Sum token usage across calls.
+
+    Missing values are ignored; a field stays ``None`` when no call reported it,
+    and ``None`` is returned when no usage was provided at all.
+    """
+    present = [usage for usage in usages if usage is not None]
+    if not present:
+        return None
+
+    def _sum(field: str) -> int | None:
+        values = [
+            getattr(usage, field)
+            for usage in present
+            if getattr(usage, field) is not None
+        ]
+        return sum(values) if values else None
+
+    return LLMUsage(
+        prompt_tokens=_sum("prompt_tokens"),
+        completion_tokens=_sum("completion_tokens"),
+        total_tokens=_sum("total_tokens"),
+    )
+
+
 @dataclass(frozen=True)
 class LLMChunk:
     """A partial piece of a streaming completion.

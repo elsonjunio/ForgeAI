@@ -35,10 +35,12 @@ from core.contracts.llm import (
     LLMProvider,
     LLMResponse,
     LLMUsage,
+    merge_usage,
 )
 from core.contracts.node import AgentNode, NodeContract, NodeContribution
 from core.contracts.plan import ExecutionPlan, PlanEdge, PlanNode
 from core.contracts.planning import (
+    CompactionRequest,
     Observation,
     Planner,
     PlanningRequest,
@@ -46,6 +48,12 @@ from core.contracts.planning import (
 )
 from core.contracts.plugin import PluginMetadata
 from core.contracts.registry import CapabilitySource
+from core.contracts.synthesis import (
+    Synthesis,
+    SynthesisMode,
+    SynthesisRequest,
+    Synthesizer,
+)
 from core.contracts.tool import Tool, ToolContract, ToolResult
 from core.contracts.validator import ValidationInput, ValidationResult, Validator
 
@@ -56,6 +64,7 @@ __all__ = [
     "CapabilityDescriptor",
     "CapabilitySource",
     "CodeAnalyzer",
+    "CompactionRequest",
     "ComplexityAssessment",
     "ComplexityEvaluator",
     "ComplexityLevel",
@@ -79,6 +88,7 @@ __all__ = [
     "LLMProvider",
     "LLMResponse",
     "LLMUsage",
+    "merge_usage",
     "NodeContract",
     "NodeContribution",
     "NodeExecutionRequest",
@@ -90,6 +100,10 @@ __all__ = [
     "PlanningRequest",
     "PlanningResult",
     "PluginMetadata",
+    "Synthesis",
+    "SynthesisMode",
+    "SynthesisRequest",
+    "Synthesizer",
     "Tool",
     "ToolContract",
     "ToolResult",

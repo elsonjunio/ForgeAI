@@ -4,42 +4,59 @@
     {
       "label": "setup: criar venv + instalar",
       "type": "shell",
-      "command": "python3 -m venv .venv && .venv/bin/python -m pip install -e 'packages/core[dev]' -e 'apps/cli' -e 'packages/plugins/code-agent-plugin-opencode-go' -e 'packages/plugins/code-agent-plugin-llm-planner' -e 'packages/plugins/code-agent-plugin-filesystem' 'httpx>=0.27'",
-      "options": { "cwd": "${workspaceFolder}" },
+      "command": "python3 -m venv .venv && .venv/bin/python -m pip install -e 'packages/core[dev]' -e 'apps/cli' -e 'packages/plugins/code-agent-plugin-opencode-go' -e 'packages/plugins/code-agent-plugin-llm-planner' -e 'packages/plugins/code-agent-plugin-filesystem' -e 'packages/plugins/code-agent-plugin-llm-synthesizer' -e 'httpx>=0.27'",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
       "problemMatcher": []
     },
     {
       "label": "cli: chat",
       "type": "shell",
       "command": "${workspaceFolder}/.venv/bin/forgeai",
-      "options": { "cwd": "${workspaceFolder}" },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
       "problemMatcher": []
     },
     {
       "label": "test",
       "type": "shell",
       "command": "${workspaceFolder}/.venv/bin/pytest",
-      "options": { "cwd": "${workspaceFolder}" },
-      "group": { "kind": "test", "isDefault": true },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
       "problemMatcher": []
     },
     {
       "label": "lint",
       "type": "shell",
       "command": "${workspaceFolder}/.venv/bin/ruff check .",
-      "options": { "cwd": "${workspaceFolder}" },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
       "problemMatcher": []
     },
     {
       "label": "typecheck",
       "type": "shell",
       "command": "${workspaceFolder}/.venv/bin/mypy",
-      "options": { "cwd": "${workspaceFolder}" },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
       "problemMatcher": []
     },
     {
       "label": "check: test + lint + typecheck",
-      "dependsOn": ["test", "lint", "typecheck"],
+      "dependsOn": [
+        "test",
+        "lint",
+        "typecheck"
+      ],
       "dependsOrder": "parallel",
       "problemMatcher": []
     }

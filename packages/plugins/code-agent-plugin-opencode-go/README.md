@@ -53,8 +53,19 @@ finally:
 | `api_key` | `$OPENCODE_API_KEY` | chave da API |
 | `base_url` | `https://opencode.ai/zen/go/v1` | base da API |
 | `timeout` | `60` | timeout HTTP (s) |
+| `max_retries` | `2` | tentativas extras em falhas transitórias |
+| `retry_base_seconds` | `0.5` | base do backoff exponencial |
+| `retry_max_seconds` | `8` | teto de um atraso de backoff |
 | `session_id` | gerado | enviado como `x-opencode-session` |
 | `reasoning_effort` | — | `low` / `high` / `max` |
+
+## Retries e backoff
+
+Falhas **transitórias** são repetidas com backoff exponencial: timeouts e erros
+de transporte, e HTTP `429`/`500`/`502`/`503`/`504`. O header `Retry-After` é
+respeitado quando presente. Erros `4xx` (exceto `429`) não são repetidos, e um
+stream **nunca** é repetido depois de já ter emitido chunks (evita duplicação).
+Esgotadas as tentativas, um `OpenCodeGoError` é levantado.
 
 ## Streaming
 

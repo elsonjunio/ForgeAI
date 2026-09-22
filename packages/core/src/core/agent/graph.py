@@ -95,12 +95,18 @@ class _ExecutionStopped(Exception):
     """Internal signal used to stop the graph (interrupt, pause, node failure)."""
 
     def __init__(
-        self, control: ExecutionControl, execution: _PlanExecution, *, failed: bool
+        self,
+        control: ExecutionControl,
+        execution: _PlanExecution,
+        *,
+        failed: bool,
+        recoverable: bool = False,
     ) -> None:
         super().__init__(control.reason or control.action.value)
         self.control = control
         self.execution = execution
         self.failed = failed
+        self.recoverable = recoverable
 
 
 class NodeRunner:
@@ -207,6 +213,7 @@ class NodeRunner:
                 ),
                 execution,
                 failed=True,
+                recoverable=result.recoverable,
             )
         if control is not None and control.action in (
             ControlAction.PAUSE,
@@ -490,6 +497,7 @@ class PlanExecutor:
             results=dict(stop.execution.results),
             control=stop.control,
             error=stop.control.reason if stop.failed else None,
+            recoverable=stop.recoverable,
         )
 
     def _emit(

@@ -23,6 +23,7 @@ from core import (
 )
 from forge_cli.commands import handle_command
 from forge_cli.interaction import TerminalInteractionProvider
+from forge_cli.progress import ProgressObserver
 from forge_cli.session import ChatSession
 
 
@@ -53,6 +54,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--system", metavar="TEXTO", help="system prompt")
     parser.add_argument("--no-stream", action="store_true", help="disable streaming")
     parser.add_argument(
+        "--no-progress", action="store_true", help="disable live plan progress"
+    )
+    parser.add_argument(
         "--no-discover", action="store_true", help="disable entry-point discovery"
     )
     parser.add_argument(
@@ -71,11 +75,13 @@ def _build_container(args: argparse.Namespace) -> CoreContainer:
     config = load_config(args.config) if args.config else CoreConfig()
     plugins = [load_plugin(spec) for spec in args.plugin]
     discoverers: list[Discoverer] | None = [] if args.no_discover else None
+    observer = None if args.no_progress else ProgressObserver()
     return build_core(
         config=config,
         plugins=plugins,
         discoverers=discoverers,
         interaction=TerminalInteractionProvider(),
+        observer=observer,
     )
 
 

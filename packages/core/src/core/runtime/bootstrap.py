@@ -7,6 +7,7 @@ from collections.abc import Iterable
 from core.agent.graph import PlanExecutor
 from core.agent.runtime import AgentRuntime
 from core.config.schema import CoreConfig
+from core.contracts.callbacks import ExecutionObserver
 from core.contracts.discovery import Discoverer
 from core.contracts.interaction import InteractionProvider
 from core.events.bus import EventBus
@@ -22,6 +23,7 @@ def build_core(
     plugins: Iterable[Plugin] = (),
     discoverers: Iterable[Discoverer] | None = None,
     interaction: InteractionProvider | None = None,
+    observer: ExecutionObserver | None = None,
 ) -> CoreContainer:
     """Assemble a fully wired core instance.
 
@@ -33,6 +35,8 @@ def build_core(
             discovery entirely.
         interaction: optional host-provided interaction mechanism, exposed to
             plugins (via their context) and to executable capabilities.
+        observer: optional host-provided observer for plan execution events
+            (node start/complete, errors), useful for live progress.
 
     Returns:
         A ready-to-use :class:`CoreContainer`. ``container.runtime`` runs the
@@ -62,7 +66,9 @@ def build_core(
         options=cfg.langgraph,
     )
 
-    executor = PlanExecutor(registry=registry, interaction=interaction)
+    executor = PlanExecutor(
+        registry=registry, interaction=interaction, observer=observer
+    )
 
     return CoreContainer(
         config=cfg,

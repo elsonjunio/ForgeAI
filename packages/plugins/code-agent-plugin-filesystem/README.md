@@ -8,9 +8,29 @@ ser referenciadas por planos (`"tool:fs.read_file"`, ...).
 | `fs.read_file` | `path`, `max_bytes?` | lê UTF-8 (truncado em `max_bytes`) |
 | `fs.list_dir` | `path?`, `pattern?` | lista entradas (dirs com `/`) |
 | `fs.stat` | `path` | `{exists, is_file, is_dir, size}` |
-| `fs.write_file` | `path`, `content`, `create_dirs?` | escreve; **pede confirmação** |
+| `fs.write_file` | `path`, `content`, `create_dirs?`, `dry_run?` | escreve; **idempotente** e **pede confirmação** |
 
 Todas pertencem ao grupo `filesystem`.
+
+## Efeitos colaterais
+
+- `fs.write_file` é **idempotente**: escrever conteúdo idêntico é no-op
+  (`metadata.skipped=True`, sem confirmação). Com `dry_run: true`, reporta o que
+  seria feito (`create`/`update`/`no-op`) **sem** tocar no disco nem pedir
+  confirmação. Escritas que mudam o conteúdo seguem pedindo confirmação.
+
+## Orientação e recuperação
+
+As descrições das tools orientam o planner a **verificar antes de agir**
+(ex.: confirmar com `fs.stat` ou `fs.list_dir` antes de ler/escrever).
+
+Falhas de caminho (`FileNotFoundError`, `NotADirectoryError`,
+`IsADirectoryError`) são marcadas como **recuperáveis**
+(`ToolResult.recoverable=True`) e trazem um **hint**: o diretório mais próximo
+existente, o que ele contém e, quando há, um `did you mean ...?`. Assim o
+planner consegue corrigir o caminho sem uma iteração extra de descoberta.
+
+Erros de permissão e outros `OSError` permanecem **fatais**.
 
 ## Instalação
 

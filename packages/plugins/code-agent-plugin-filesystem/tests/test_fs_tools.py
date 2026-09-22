@@ -93,6 +93,47 @@ def test_write_file_denied(tmp_path: Path) -> None:
     assert not (tmp_path / "out.txt").exists()
 
 
+def test_write_file_identical_content_is_noop(tmp_path: Path) -> None:
+    (tmp_path / "out.txt").write_text("hi", encoding="utf-8")
+    interaction = _Interaction(True)
+    tool = WriteFileTool(root=tmp_path, interaction=interaction)
+    result = tool.execute(
+        _request("n1", "tool:fs.write_file", {"path": "out.txt", "content": "hi"})
+    )
+    assert result.success
+    assert result.metadata.get("skipped") is True
+    assert "unchanged" in (result.output or "")
+    assert interaction.requests == []  # a no-op needs no confirmation
+
+
+def test_write_file_dry_run_does_not_write(tmp_path: Path) -> None:
+    tool = WriteFileTool(root=tmp_path)  # confirmation on, but dry-run skips it
+    result = tool.execute(
+        _request(
+            "n1",
+            "tool:fs.write_file",
+            {"path": "out.txt", "content": "hi", "dry_run": True},
+        )
+    )
+    assert result.success
+    assert result.metadata.get("dry_run") is True
+    assert "would create" in (result.output or "")
+    assert not (tmp_path / "out.txt").exists()
+
+
+def test_write_file_dry_run_reports_update(tmp_path: Path) -> None:
+    (tmp_path / "out.txt").write_text("old", encoding="utf-8")
+    tool = WriteFileTool(root=tmp_path)
+    result = tool.execute(
+        _request(
+            "n1",
+            "tool:fs.write_file",
+            {"path": "out.txt", "content": "new", "dry_run": True},
+        )
+    )
+    assert "would update" in (result.output or "")
+
+
 def test_write_file_without_provider_fails(tmp_path: Path) -> None:
     tool = WriteFileTool(root=tmp_path)
     result = tool.execute(
@@ -107,3 +148,34 @@ def test_read_outside_root_raises(tmp_path: Path) -> None:
     tool = ReadFileTool(root=tmp_path)
     with pytest.raises(PathSecurityError):
         tool.execute(_request("n1", "tool:fs.read_file", {"path": "../secret.txt"}))
+
+
+def test_read_missing_file_is_recoverable(tmp_path: Path) -> None:
+    tool = ReadFileTool(root=tmp_path)
+    result = tool.execute(_request("n1", "tool:fs.read_file", {"path": "missing.txt"}))
+    assert not result.success
+    assert result.recoverable is True
+    assert "FileNotFoundError" in (result.error or "")
+
+
+def test_list_missing_dir_is_recoverable(tmp_path: Path) -> None:
+    tool = ListDirTool(root=tmp_path)
+    result = tool.execute(_request("n1", "tool:fs.list_dir", {"path": "nope"}))
+    assert not result.success
+    assert result.recoverable is True
+
+
+def test_read_missing_file_hints_existing_names(tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text("hi", encoding="utf-8")
+    tool = ReadFileTool(root=tmp_path)
+    result = tool.execute(_request("n1", "tool:fs.read_file", {"path": "readme.md"}))
+    assert not result.success
+    message = result.error or ""
+    assert "README.md" in message
+    assert "did you mean" in message
+
+
+def test_tool_descriptions_guide_verification(tmp_path: Path) -> None:
+    assert "fs.stat" in ReadFileTool(root=tmp_path).contract.description
+    assert "fs.stat" in WriteFileTool(root=tmp_path).contract.description
+    assert "fs.list_dir" in ListDirTool(root=tmp_path).contract.description

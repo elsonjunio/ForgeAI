@@ -40,11 +40,14 @@ class ToolResult:
     Args:
         output: textual output of the tool, when any.
         is_error: whether the invocation failed.
+        recoverable: whether the failure could be avoided by a different plan
+            (for example a missing path). Propagated to ``NodeResult.recoverable``.
         metadata: free-form structured data (exit codes, paths, ...).
     """
 
     output: str | None = None
     is_error: bool = False
+    recoverable: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -97,5 +100,6 @@ class Tool(Capability):
             success=not result.is_error,
             output=result.output,
             error=result.output if result.is_error else None,
+            recoverable=result.recoverable,
             metadata=dict(result.metadata),
         )
